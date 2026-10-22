@@ -1,4 +1,4 @@
-import { defaults, type TornadoParameters } from './config.ts';
+import { defaults, VOLUME_WIDTH, type TornadoParameters } from './config.ts';
 
 // D3Q19 lattice. Opposite directions occur in adjacent pairs after rest.
 export const CX = new Int8Array([0, 1,-1, 0, 0, 0, 0, 1,-1, 1,-1, 1,-1, 1,-1, 0, 0, 0, 0]);
@@ -23,6 +23,7 @@ export class LbmSolver {
   private nextDensity: Float32Array;
   private target: Float32Array;
   private condensation: Float32Array;
+  private lightDepth: Float32Array;
   private populations = new Float64Array(19);
   parameters: TornadoParameters;
   iteration = 0;
@@ -39,6 +40,7 @@ export class LbmSolver {
     this.nextDensity = new Float32Array(this.size);
     this.target = new Float32Array(this.size * 3);
     this.condensation = new Float32Array(this.size);
+    this.lightDepth = new Float32Array(this.size);
     this.updateForcing();
     for (let i = 0; i < this.size; i++) {
       const u = this.target[i*3], v = this.target[i*3+1], w = this.target[i*3+2];
@@ -55,9 +57,10 @@ export class LbmSolver {
     const t = this.iteration * 0.013;
     for (let z = 0; z < nz; z++) {
       const h = z / (nz - 1);
-      const bendX = (Math.sin(h*5 + t*.35) - Math.sin(t*.35)) * .075 * h;
-      const bendY = Math.sin(h*4 - t*.24) * .055 * h;
-      const core = (.095 + .23 * h*h + .12*Math.pow(h, 8)) * p.radius;
+      const bendX = Math.sin(h*3.6+t*.25)*.045*h;
+      const bendY = Math.sin(h*4-t*.19)*.035*h;
+      const shoulder = clamp((h-.32)/.48,0,1);
+      const core = (.085+.22*h+.32*shoulder*shoulder) * p.radius;
       for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
         const i = x + nx*(y + ny*z);
         const dx = (x/(nx-1)-.5)*2 - bendX;
@@ -72,17 +75,20 @@ export class LbmSolver {
         this.target[i*3+1] = dx/r*spin + dy/r*inflow - perturb;
         this.target[i*3+2] = .07*p.updraft*Math.exp(-r*r/(core*core*3)) * clamp(h*18, 0, 1);
 
-        // Condensation keeps a thin, coherent funnel; the scalar still evolves
+        // Condensation keeps a coherent funnel and broad rolling crown; the scalar evolves
         // through the LBM velocity, dissipation and continuously supplied dust.
-        const corrugation = 1 + .12*p.turbulence*Math.sin(3*a - h*28 + t*2);
+        const corrugation = 1 + .13*p.turbulence*Math.sin(3*a - h*15 + t*1.3);
         const rr = r / (core*corrugation);
-        const shell = Math.exp(-Math.pow((rr-.65)/.65, 2));
-        const topFade = clamp((.98-h)*10, 0, 1);
-        const funnel = shell * .95 * topFade;
-        const dust = Math.exp(-r*r/.13)*Math.exp(-h*28)*.9;
-        const crown = Math.exp(-Math.pow((h-.85)/.095, 2))*Math.exp(-r*r/.28)*.7*topFade;
-        const grain = .8 + .2*Math.sin(x*1.7+y*.8+z*1.3);
-        this.condensation[i] = clamp((funnel+dust+crown)*grain*edge, 0, 1);
+        const shell = Math.exp(-Math.pow((rr-.68)/.62, 2));
+        const topFade = clamp((1-h)*11,0,1);
+        const funnel = shell * (1.12-.5*clamp((h-.6)/.3,0,1)) * topFade;
+        const dust = Math.exp(-r*r/.085)*Math.exp(-h*23)*.62;
+        const canopyHeight=.76+.09*Math.sin(a*2-r*5+t*.4)+.035*Math.cos(r*14-a*3);
+        const canopy=Math.exp(-Math.pow((h-canopyHeight)/.14,2))*Math.exp(-Math.pow((r-.57)/.29,2))
+          *clamp((.98-r)*5,0,1)*.92;
+        const roll=Math.exp(-Math.pow((h-(.63+.06*Math.sin(a*2-r*11-t*.5)))/.1,2))
+          *Math.exp(-Math.pow((r-.57)/.22,2))*.3;
+        this.condensation[i] = clamp((funnel+dust+canopy+roll)*edge*topFade, 0, 1);
       }
     }
   }
@@ -147,6 +153,7 @@ export class LbmSolver {
 
   /** z slices packed in a 2D atlas; half-texel addressing avoids slice bleeding. */
   toAtlas(): Uint8Array {
+    this.updateLighting();
     const columns = Math.ceil(Math.sqrt(this.nz));
     const rows = Math.ceil(this.nz / columns);
     const width = columns * this.nx;
@@ -155,9 +162,27 @@ export class LbmSolver {
       const src = x + this.nx*(y+this.ny*z);
       const dst = ((z%columns)*this.nx+x + width*(Math.floor(z/columns)*this.ny+y))*4;
       result[dst] = Math.round(this.density[src]*255);
+      result[dst+1] = Math.round(Math.min(1,this.lightDepth[src]/12)*255);
       result[dst+3] = 255;
     }
     return result;
+  }
+
+  /** One directional sweep, O(voxels), instead of a shadow ray per view sample. */
+  private updateLighting() {
+    const {nx,ny,nz,density,lightDepth:light}=this;
+    const dz=this.parameters.height/(nz-1),dx=VOLUME_WIDTH/(nx-1),dy=VOLUME_WIDTH/(ny-1);
+    const sx=-.8*dz/dx,sy=-.5*dz/dy;
+    for(let z=nz-1;z>=0;z--)for(let y=0;y<ny;y++)for(let x=0;x<nx;x++){
+      const i=x+nx*(y+ny*z);
+      const a=x+sx,b=y+sy;
+      let upstream=0;
+      if(z<nz-1&&a>=0&&b>=0&&a<nx-1&&b<ny-1){
+        const ax=Math.floor(a),by=Math.floor(b),tx=a-ax,ty=b-by,j=ax+nx*(by+ny*(z+1));
+        upstream=(light[j]*(1-tx)+light[j+1]*tx)*(1-ty)+(light[j+nx]*(1-tx)+light[j+nx+1]*tx)*ty;
+      }
+      light[i]=Math.min(12,upstream+density[i]*dz*.0015);
+    }
   }
 
   diagnostics() {

@@ -1,0 +1,58 @@
+{
+  "state": {
+    "quality": "medium",
+    "parameters": {
+      "swirl": 1.15,
+      "updraft": 1,
+      "turbulence": 0.55,
+      "density": 1.25,
+      "radius": 1,
+      "height": 3000,
+      "speed": 1
+    },
+    "paused": false,
+    "iteration": 184
+  },
+  "endState": {
+    "quality": "medium",
+    "parameters": {
+      "swirl": 1.15,
+      "updraft": 1,
+      "turbulence": 0.55,
+      "density": 1.25,
+      "radius": 1,
+      "height": 3000,
+      "speed": 1
+    },
+    "paused": false,
+    "iteration": 460
+  },
+  "viewport": [
+    1440,
+    1000
+  ],
+  "drawingBuffer": [
+    1144,
+    932
+  ],
+  "durationSeconds": 10,
+  "frame": {
+    "count": 2398,
+    "meanMs": 4.170558798999166,
+    "medianMs": 4.199999999254942,
+    "p95Ms": 4.300000000745058
+  },
+  "cpuSubmission": {
+    "count": 2398,
+    "meanMs": 0.7525020850973019,
+    "medianMs": 0.7000000011175871,
+    "p95Ms": 1.099999999627471
+  },
+  "gpu": {
+    "count": 1206,
+    "meanMs": 2.7191893598673307,
+    "medianMs": 2.771776,
+    "p95Ms": 3.27104
+  },
+  "gpuTimerSupported": true
+}

@@ -74,8 +74,10 @@ async function boot() {
   if (!(initialEffect instanceof TornadoEffect)) throw new Error('Invalid initial effect');
   const effect = initialEffect;
   effect.mount({viewer,onStatus:notify});
-  effect.focus();
-  const removeProfiler=attachFrameProfiler(viewer,()=>({quality:effect.quality,parameters:{...effect.parameters},paused:effect.paused,iteration:effect.statistics.iteration}));
+  if (new URLSearchParams(location.search).has('benchmark')) effect.focus();
+  else effect.focusReference();
+  const removeProfiler=attachFrameProfiler(viewer,()=>({quality:effect.quality,parameters:{...effect.parameters},paused:effect.paused,iteration:effect.statistics.iteration,
+    camera:{position:Cartesian3.pack(viewer.camera.positionWC,[]),direction:Cartesian3.pack(viewer.camera.directionWC,[]),up:Cartesian3.pack(viewer.camera.upWC,[])}}));
   element('loading').classList.add('hidden');
 
   function paintRange(input: HTMLInputElement) {
@@ -122,6 +124,13 @@ async function boot() {
   element('restart').addEventListener('click',()=>{ failed=false; elapsed=0; effect.reset(); });
   element<HTMLSelectElement>('speed').addEventListener('change',event=>effect.updateParameters({speed:Number((event.target as HTMLSelectElement).value)}));
   element('focus').addEventListener('click',()=>{ effect.focus(); setOrbitButton(false); });
+  const referenceView=document.createElement('button');
+  referenceView.id='reference-view';
+  referenceView.className='reference-view';
+  referenceView.textContent='3:42 · 云冠近景';
+  referenceView.title='以视频 3:42 为参考的云冠观察机位';
+  document.querySelector('.scene-heading')!.append(referenceView);
+  referenceView.addEventListener('click',()=>{effect.focusReference();setOrbitButton(false);});
   function setOrbitButton(active: boolean) { element('orbit').classList.toggle('active',active); element('orbit').setAttribute('aria-pressed',String(active)); }
   element('orbit').addEventListener('click',()=>{ effect.setOrbit(!effect.orbit); setOrbitButton(effect.orbit); });
   element('zoom-in').addEventListener('click',()=>viewer.camera.zoomIn(Math.max(100,viewer.camera.positionCartographic.height*.2)));

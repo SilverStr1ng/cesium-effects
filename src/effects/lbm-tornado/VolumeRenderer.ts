@@ -1,14 +1,16 @@
 import { Cartesian2, Cartesian3, Matrix4, PostProcessStage, PostProcessStageSampleMode, Transforms, type Viewer } from 'cesium';
-import { DynamicTexture } from '../../scene/DynamicTexture';
-import { location, qualities, type Quality, type SimulationFrame, type TornadoParameters } from './config';
+import { DynamicTexture, createRepeatingVolume, type GpuTexture } from '../../scene/DynamicTexture';
+import { location, qualities, VOLUME_WIDTH, type Quality, type SimulationFrame, type TornadoParameters } from './config';
+import { createNoiseVolume, NOISE_SIZE } from './NoiseVolume';
 import fragmentShader from './shaders/volume.frag.glsl?raw';
 
 export class VolumeRenderer {
   readonly stage: PostProcessStage;
   private texture: DynamicTexture;
+  private noise: GpuTexture;
   private viewToLocal = new Matrix4();
   private inverseModel: Matrix4;
-  private dimensions = new Cartesian3(2400, 2400, 3000);
+  private dimensions = new Cartesian3(VOLUME_WIDTH, VOLUME_WIDTH, 3000);
   private removePreRender: () => void;
   private pending?: Uint8Array;
   time = 0;
@@ -17,6 +19,7 @@ export class VolumeRenderer {
     const { nx, ny, nz, steps, scale } = qualities[quality];
     const columns = Math.ceil(Math.sqrt(nz)), rows = Math.ceil(nz/columns);
     this.texture = new DynamicTexture(viewer.scene, nx*columns, ny*rows);
+    this.noise = createRepeatingVolume(viewer.scene,NOISE_SIZE,createNoiseVolume());
     const origin = Cartesian3.fromDegrees(location.longitude, location.latitude, 8);
     this.inverseModel = Matrix4.inverseTransformation(Transforms.eastNorthUpToFixedFrame(origin), new Matrix4());
     this.stage = new PostProcessStage({
@@ -24,6 +27,7 @@ export class VolumeRenderer {
       sampleMode: PostProcessStageSampleMode.LINEAR,
       uniforms: {
         u_density: () => this.texture.texture,
+        u_noise: () => this.noise,
         u_viewToLocal: () => this.viewToLocal,
         u_dimensions: () => this.dimensions,
         u_grid: new Cartesian3(nx,ny,nz), u_tiles: new Cartesian2(columns,rows),
@@ -45,5 +49,6 @@ export class VolumeRenderer {
     this.removePreRender();
     this.viewer.scene.postProcessStages.remove(this.stage);
     this.texture.destroy();
+    if(!this.noise.isDestroyed())this.noise.destroy();
   }
 }

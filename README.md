@@ -33,6 +33,7 @@ VITE_CESIUM_ION_TOKEN=
 - 底部播放键 / 空格：暂停与继续。暂停同时冻结 LBM 步进和烟雾细节动画。
 - 重置键：保留当前参数，重新初始化流场；「恢复默认」重置参数。
 - 右侧：定位、环绕观察、放大/缩小、距离参考圈、地球总览。
+- 默认进入「3:42 · 云冠近景」；标题下的同名按钮可返回这个机位，右侧定位键切换到整体侧视。
 - 顶部特效开关：关闭绘制及后续模拟调度，重新开启保留当前状态。
 - 页面隐藏时停止调度模拟；特效销毁时释放 Worker、纹理、后处理阶段及事件监听。
 
@@ -54,6 +55,7 @@ src/
       LbmSolver.ts           # 独立于 Cesium 的 D3Q19 流体求解器
       simulation.worker.ts   # Worker 中计算并传输密度场
       VolumeRenderer.ts      # 坐标转换、纹理上传、体积阶段
+      NoiseVolume.ts         # 可重复采样的四通道三维云噪声
       shaders/volume.frag.glsl
   ui/icons.ts
   main.ts                    # 实验室界面与交互
@@ -74,17 +76,18 @@ tornado.destroy();
 
 ## LBM 与渲染实现
 
-参考：[凹凸鑫巴「加了 LBM 终于成完美陀螺龙卷了」](https://www.bilibili.com/video/BV13WMB6SEEf/)。参考其旋转漏斗、顶部云团和贴地尘雾形态，代码在本项目独立实现，没有使用或转载视频素材。
+参考：[凹凸鑫巴「加了 LBM 终于成完美陀螺龙卷了」](https://www.bilibili.com/video/BV13WMB6SEEf/?t=222)。本轮以用户选定的 **3:42** 大尺度云冠近景为方向，将体积域扩大至 7.2 km，增加环形云冠、中心空腔、起伏云沿与近景机位。代码独立实现，没有使用或转载视频素材。视频相似度尚未有可复现的量化结果，不能据此宣称误差小于 5%。
 
 1. **真实三维 LBM 流场**：D3Q19 的 19 个分布函数，pull streaming，BGK 碰撞与 Guo 外力。`tau = 0.64`，底部采用反弹边界，侧面和顶部为密度 1 的平衡态储库。
 2. **受控涡旋**：径向汇聚、切向旋转、中心上升流与时变扰动作为外力驱动。漏斗、云冠和尘雾是持续凝结/注入源，初始场预填充以便立即观察。
 3. **烟雾输运**：用 LBM 求出的速度场做三线性半拉格朗日标量平流，并结合耗散与凝结源。为适合实时视觉展示，标量使用 3 倍输运系数。
-4. **GPU 体积渲染**：密度切片打包为 RGBA8 二维 atlas，通过半 texel 采样避免切片串色。局部 ENU 空间中做射线与包围盒求交、前向透明度累积、近似自遮蔽和程序化噪声侵蚀，使用 Cesium 场景深度裁剪，避免穿过地球/不透明物体。
-5. **主线程与 Worker 分离**：每次最多一个在途计算请求，transferable 传输 atlas；主线程每帧更新小尺寸纹理。程序化细节在渲染端平滑动画。
+4. **GPU 体积渲染**：RGBA8 二维 atlas 的 R 通道保存密度，G 通道保存 Worker 单次方向扫描生成的光学深度。使用半 texel 寻址、ENU 包围盒求交、前向透明度累积和提前终止，并用 Cesium 场景深度裁剪。缓存自遮蔽避免每个视线采样点再次追踪阴影射线。
+5. **云体细节**：一次性生成 48³ RGBA 周期性 Worley / value-noise 纹理（约 432 KiB），WebGL 2 三线性采样。大尺度侵蚀、细节扰动、局部光照梯度和有界差分剪切形成翻卷云层；剪切幅度有界，避免运行越久越被拉成细密同心圆。缓存噪声复用于画质切换。
+6. **主线程与 Worker 分离**：每次最多一个在途计算请求，transferable 传输密度和光照 atlas；主线程仅在收到新帧时上传纹理。程序化细节在渲染端平滑动画。
 
 这是一套**受艺术参数控制的实时视觉流体特效**：包含实际 LBM 求解，但不是气象级数值预测，也不等同于视频的 UE 原工程或全 GPU 高分辨率求解。渲染高度独立缩放；噪声细节与云形凝结源用于改善浏览器端低分辨率网格的外观。半透明物体之间不保证精确排序，体积阴影目前只做自遮蔽，不向地表投射真实阴影。
 
-`DynamicTexture.ts` 使用了 Cesium 导出但未写入公开 TypeScript 声明的 `Texture` 与 Scene context。兼容边界集中于此文件，升级 Cesium 时需实际检查纹理上传、GLSL 编译和深度遮挡。版本使用精确锁定和 `package-lock.json`，避免自动升级破坏渲染。
+`DynamicTexture.ts` 使用了 Cesium 导出但未写入公开 TypeScript 声明的 `Texture`、`Texture3D` 与 Scene context。兼容边界集中于此文件，升级 Cesium 时需实际检查纹理上传、GLSL 编译和深度遮挡。版本使用精确锁定和 `package-lock.json`，避免自动升级破坏渲染。
 
 ## 验证与构建
 
@@ -97,3 +100,9 @@ npm run preview
 将 `dist/` 部署到静态 HTTP 服务即可，支持相对路径。不要通过 `file://` 双击打开，Worker 和 Cesium 资源需要 HTTP。Cesium 的引擎 bundle 较大，建议服务器开启 gzip/Brotli。
 
 性能取决于 GPU、浏览器分辨率和选择的画质；面板显示真实渲染 FPS 和最近一次 Worker 批次耗时。低性能设备优先选择「流畅」。
+
+使用 `/?benchmark` 打开可见的 10 秒性能采样工具（先预热 2 秒），分别记录帧间隔、CPU 提交时间和 GPU timer query 时间。没有 GPU 计时扩展时显示不可用；页面进入后台时取消测量。该入口默认使用全景侧视机位，便于前后版本比较。[验证记录](docs/tornado-validation.md) 包含本机测量和视觉验收边界。
+
+## 许可与提交
+
+代码采用 [MIT License](LICENSE)。Cesium 及其他依赖保留各自许可证。仓库地址为 https://github.com/SilverStr1ng/cesium-effects.git，提交采用 Angular 风格：`type(scope): description`。`.env` 保留在本地，仓库仅提供空值模板 `.env.example`。

@@ -87,6 +87,18 @@ export class TornadoEffect implements SceneEffect {
       offset: new HeadingPitchRange(CesiumMath.toRadians(8), CesiumMath.toRadians(-12), this.parameters.height*2.2),
     });
   }
+  /** Elevated close view of the rolling cloud crown, inspired by the 3:42 shot. */
+  focusReference() {
+    if (!this.context) return;
+    this.orbit = false;
+    const target=Cartesian3.fromDegrees(location.longitude,location.latitude,this.parameters.height*.64);
+    const camera=this.context.viewer.camera;
+    camera.lookAtTransform(Matrix4.IDENTITY);
+    camera.flyToBoundingSphere(new BoundingSphere(target,this.parameters.height*.55),{
+      duration:1.3,
+      offset:new HeadingPitchRange(CesiumMath.toRadians(-32),CesiumMath.toRadians(-38),this.parameters.height*1.55),
+    });
+  }
   setOrbit(enabled: boolean) {
     this.orbit = enabled;
     if (!this.context) return;

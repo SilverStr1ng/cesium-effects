@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { LbmSolver, W, CX, CY, CZ } from '../src/effects/lbm-tornado/LbmSolver.ts';
 import { defaults } from '../src/effects/lbm-tornado/config.ts';
+import { createNoiseVolume, periodicNoise } from '../src/effects/lbm-tornado/NoiseVolume.ts';
 
 test('D3Q19 conserves zeroth and second equilibrium moments', () => {
   assert.ok(Math.abs(W.reduce((a,b)=>a+b,0)-1)<1e-12);
@@ -68,4 +69,34 @@ test('reset is deterministic and changing parameters changes the field',()=>{
   b.parameters={...defaults,swirl:0,updraft:0,turbulence:0};
   for(let n=0;n<20;n++){a.step();b.step();}
   assert.notDeepEqual(a.velocity,b.velocity);
+});
+
+test('cached optical depth accumulates through smoke and clears after density removal',()=>{
+  const solver=new LbmSolver(16,18,24);
+  solver.density.fill(.5);
+  const atlas=solver.toAtlas(),columns=5,width=columns*16;
+  const light=(x:number,y:number,z:number)=>atlas[((z%columns)*16+x+width*(Math.floor(z/columns)*18+y))*4+1];
+  assert.ok(light(8,9,22)>light(8,9,23));
+  assert.ok(light(8,9,12)>light(8,9,22));
+  const expectedTop=Math.round((.5*defaults.height/23*.0015)/12*255);
+  assert.equal(light(8,9,23),expectedTop);
+  solver.density.fill(0);
+  const cleared=solver.toAtlas();
+  for(let i=0;i<cleared.length;i+=4){assert.equal(cleared[i],0);assert.equal(cleared[i+1],0);}
+});
+
+test('cloud noise is periodic across negative coordinates and continuous at seams',()=>{
+  for(const p of [[-.001,2.3,5.7],[3.999,-2.4,.01],[.4,.8,1.2]]){
+    const a=periodicNoise(p[0],p[1],p[2],4);
+    assert.ok(a>=0&&a<=1);
+    assert.ok(Math.abs(a-periodicNoise(p[0]+4,p[1]-4,p[2]+8,4))<1e-12);
+  }
+  assert.ok(Math.abs(periodicNoise(-1e-5,.2,.3,4)-periodicNoise(1e-5,.2,.3,4))<1e-6);
+  const a=createNoiseVolume(8),b=createNoiseVolume(8);
+  assert.equal(a.length,8**3*4);
+  assert.deepEqual(a,b);
+  for(let channel=0;channel<4;channel++){
+    const values=new Set(Array.from(a).filter((_,i)=>i%4===channel));
+    assert.ok(values.size>16,'each channel must contain spatial detail');
+  }
 });

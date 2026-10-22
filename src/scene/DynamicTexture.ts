@@ -1,10 +1,24 @@
 import * as Cesium from 'cesium';
 
 interface TextureSource { width: number; height: number; arrayBufferView: Uint8Array }
-interface GpuTexture {
+export interface GpuTexture {
   copyFrom(options: { source: TextureSource }): void;
   destroy(): void;
   isDestroyed(): boolean;
+}
+
+/** WebGL2 hardware trilinear, repeat-wrapped noise volume (four channels). */
+export function createRepeatingVolume(scene: Cesium.Scene, size: number, bytes: Uint8Array): GpuTexture {
+  const api=Cesium as unknown as {
+    Texture3D:new(options:object)=>GpuTexture;
+    Sampler:new(options:object)=>unknown;
+    TextureWrap:{REPEAT:number};
+  };
+  const {context}=scene as unknown as {context:unknown};
+  return new api.Texture3D({context,flipY:false,
+    source:{width:size,height:size,depth:size,arrayBufferView:bytes},
+    sampler:new api.Sampler({wrapS:api.TextureWrap.REPEAT,wrapT:api.TextureWrap.REPEAT,wrapR:api.TextureWrap.REPEAT}),
+  });
 }
 interface TextureConstructor {
   new(options: { context: unknown; source: TextureSource; flipY: boolean }): GpuTexture;

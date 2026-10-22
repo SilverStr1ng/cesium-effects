@@ -21,6 +21,7 @@ export const qualities = {
 } as const;
 
 export const location = { longitude: -97.52, latitude: 35.46 };
+export const VOLUME_WIDTH = 7200;
 
 export type WorkerRequest =
   | { type: 'init'; quality: Quality; parameters: TornadoParameters }
