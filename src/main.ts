@@ -93,7 +93,7 @@ async function boot() {
     referenceView.hidden=!tornado;
     updateSceneLabels(tornado);
     if(tornado)effect.focusReference();else atmosphere.focus();
-  });
+  },viewer);
   environmentPanel.element.querySelector<HTMLSelectElement>('#experience')!.value=startTornado?'tornado':'sky';
   tornadoPanel.hidden=!startTornado;root.classList.toggle('sky-mode',!startTornado);
   function updateSceneLabels(tornado:boolean){
