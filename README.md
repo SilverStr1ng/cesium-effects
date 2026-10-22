@@ -2,7 +2,7 @@
 
 一个可扩展的 Cesium 特效实验项目。使用 **Cesium 1.146.0**（初始化时从 npm 查询的最新稳定版本）、Vite 8 和 TypeScript。第一个特效是三维 LBM 龙卷风。
 
-当前默认进入“全球天空”，包含独立的 [Hillaire LUT 大气](docs/atmosphere.md)。左侧“观察场景”可返回 LBM 龙卷风，或通过 `/?effect=tornado` 直接打开。Cesium 默认天空大气、地面大气和雾已关闭。
+当前默认进入“全球天空”，包含独立的 [Hillaire LUT 大气](docs/atmosphere.md) 和 [全球体积云](docs/global-clouds.md)。大气接入 Cesium Clock，带可调太阳视大小、光晕与月相；云层支持地面、穿云和太空观察。左侧“观察场景”可返回 LBM 龙卷风，或通过 `/?effect=tornado` 直接打开。Cesium 默认天空大气、地面大气和雾已关闭。
 
 ## 启动
 
@@ -27,7 +27,15 @@ VITE_CESIUM_ION_TOKEN=
 
 `VITE_` 变量会进入浏览器构建产物：这里应使用允许公开给前端、限制来源和资源权限的 ion Token，不要填写服务端密钥。
 
-## 使用
+## 天空与云层
+
+- 编辑 UTC 时间或播放 Cesium Clock，太阳、月亮、地表和云光照同步变化。
+- 「散射与太阳参数」中可调整大气介质、曝光与太阳视大小；1× 为真实视直径，默认 1.6× 为可调视觉增强。
+- 全球云支持云量、密度、云底/厚度、风速和边缘细节；提供三档画质与云下/云中/云上/全球机位。
+- 风按真实秒推进，支持单独暂停；在全球天空中按空格暂停/继续风场。
+- 天空和云均可独立开关；切回龙卷风时默认关闭全球云。
+
+## 龙卷风使用
 
 - 六个滑块：旋转强度、上升气流、湍流扰动、烟雾浓度、漏斗宽度、风暴高度。
 - 三个预设：经典漏斗、强风暴、轻烟涡流；应用预设会重建流场。
@@ -65,7 +73,7 @@ src/
 tests/lbm.test.ts
 ```
 
-新增特效时，在 `src/effects/<effect-id>/` 创建目录，实现 `SceneEffect` 的 `mount / setEnabled / setPaused / reset / focus / destroy`，然后在 `registry.ts` 注册工厂和描述。特效自身负责创建与释放资源，不要销毁共用 Viewer。当前参数面板针对龙卷风；增加第二个特效时，在 `main.ts` 接入对应参数面板和选择入口。可以直接在其他 Cesium 应用中实例化 `TornadoEffect` 并挂载，不依赖此界面。
+新增特效时，在 `src/effects/<effect-id>/` 创建目录，实现 `SceneEffect` 的 `mount / setEnabled / setPaused / reset / focus / destroy`，然后在 `registry.ts` 注册工厂和描述。特效自身负责创建与释放资源，不要销毁共用 Viewer。大气与云分别位于 `hillaire-atmosphere/`、`global-clouds/`；界面接入独立的 `EnvironmentPanel` 和 `CloudPanel`。`scene/CloudNoise.ts` 共享确定性噪声数据，GPU 纹理由各 effect 独立持有。可以直接在其他 Cesium 应用中实例化这些 effect 并挂载，不依赖此界面。
 
 ```ts
 const tornado = new TornadoEffect();
@@ -103,7 +111,7 @@ npm run preview
 
 性能取决于 GPU、浏览器分辨率和选择的画质；面板显示真实渲染 FPS 和最近一次 Worker 批次耗时。低性能设备优先选择「流畅」。
 
-使用 `/?benchmark` 打开可见的 10 秒性能采样工具（先预热 2 秒），分别记录帧间隔、CPU 提交时间和 GPU timer query 时间。没有 GPU 计时扩展时显示不可用；页面进入后台时取消测量。该入口默认使用全景侧视机位，便于前后版本比较。[验证记录](docs/tornado-validation.md) 包含本机测量和视觉验收边界。
+使用 `/?benchmark` 打开可见的 10 秒性能采样工具（先预热 2 秒），分别记录帧间隔、CPU 提交时间和 GPU timer query 时间，以及所有特效状态和相机。没有 GPU 计时扩展时显示不可用；页面进入后台时取消测量。默认进入全球天空；龙卷风使用 `/?effect=tornado&benchmark`。[龙卷风验证记录](docs/tornado-validation.md) 和 [云方案/验证记录](docs/global-clouds.md) 包含本机测量与边界。
 
 ## 许可与提交
 

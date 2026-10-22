@@ -12,7 +12,7 @@ export function mountEnvironmentPanel(sidebar:HTMLElement,atmosphere:AtmosphereE
     <div class="environment-presets"><button id="clock-play">播放时间</button><select id="clock-speed" aria-label="时间倍率"><option value="60">60×</option><option value="600" selected>600×</option><option value="3600">3600×</option></select><button id="moon-view">观察月亮</button></div>
     <p id="lunar-phase" class="environment-description"></p>
     <div class="environment-presets"><button data-sun="28">晴昼</button><button data-sun="1">日落</button><button data-sun="-18">夜晚</button></div>
-    <div id="atmosphere-controls"></div>
+    <details class="environment-details"><summary>散射与太阳参数</summary><div id="atmosphere-controls"></div></details>
     <div class="environment-views"><button data-sky-view="ground">地面天空</button><button data-sky-view="orbit">轨道边缘</button><button data-sky-view="space">全球视图</button></div>
     <div id="environment-extra"></div>`;
   sidebar.querySelector('.library-heading')!.after(panel);

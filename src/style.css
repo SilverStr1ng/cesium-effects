@@ -12,3 +12,7 @@
 .reference-view { margin-top: 14px; padding: 8px 12px; border: 1px solid #95aa6966; border-radius: 5px; background: #152020dd; color: #d7e6ad; font: inherit; font-size: 11px; cursor: pointer; pointer-events: auto; }
 .scene-heading,.simulation-info { text-shadow: 0 1px 4px #071211, 0 0 12px #071211; }
 @media(max-width:700px) { .simulation-info { top: 168px; } }
+
+.cloud-panel{margin-top:24px;padding-top:8px;border-top:1px solid var(--line,#25313c)} .environment-views{flex-wrap:wrap}
+
+.environment-details{margin:12px 0}.environment-details summary{cursor:pointer;font-size:12px;color:#a7b6b0;padding:8px 0}.environment-details[open] summary{margin-bottom:12px}

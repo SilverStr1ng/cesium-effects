@@ -24,6 +24,13 @@ interface TextureConstructor {
   new(options: { context: unknown; source: TextureSource; flipY: boolean }): GpuTexture;
 }
 
+/** Longitude wraps, latitude clamps at the poles. */
+export function createWeatherTexture(scene:Cesium.Scene,width:number,height:number,bytes:Uint8Array):GpuTexture {
+  const api=Cesium as unknown as {Texture:new(options:object)=>GpuTexture;Sampler:new(options:object)=>unknown;TextureWrap:{REPEAT:number;CLAMP_TO_EDGE:number}};
+  return new api.Texture({context:(scene as unknown as {context:unknown}).context,flipY:false,
+    source:{width,height,arrayBufferView:bytes},sampler:new api.Sampler({wrapS:api.TextureWrap.REPEAT,wrapT:api.TextureWrap.CLAMP_TO_EDGE})});
+}
+
 /**
  * The only Cesium internal API boundary. Texture is exported at runtime, but
  * marked private and omitted from Cesium.d.ts. Pinned/tested with 1.146.0.
