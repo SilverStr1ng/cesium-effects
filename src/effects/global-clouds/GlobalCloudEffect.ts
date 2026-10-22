@@ -1,13 +1,14 @@
 import {Cartesian3,Math as CesiumMath,Matrix4,PixelDatatype,PostProcessStage,PostProcessStageComposite,PostProcessStageSampleMode} from 'cesium';
 import type {EffectContext,SceneEffect} from '../types';
-import {cloudDefaults,cloudQualities,type CloudParameters,type CloudQuality} from './config';
+import {cloudDefaults,cloudQualities,type CloudParameters,type CloudQuality,type CloudView} from './config';
 import {createWeather,WEATHER_WIDTH,WEATHER_HEIGHT} from './WeatherField';
 import {createCumulusNoise,CUMULUS_NOISE_SIZE} from './CumulusNoise';
 import {createRepeatingVolume,createWeatherTexture,type GpuTexture} from '../../scene/DynamicTexture';
 import {POLAR_SCALE} from '../hillaire-atmosphere/atmosphereMath';
 import density from './shaders/density.glsl?raw';
 import march from './shaders/march.glsl?raw';
-import lighting from './shaders/lighting.glsl?raw';
+import intervals from './shaders/intervals.glsl?raw';
+import lighting from './shaders/droplet-lighting.glsl?raw';
 import resolve from './shaders/resolve.glsl?raw';
 import radiometry from './shaders/radiometry.glsl?raw';
 import storage from './shaders/storage.glsl?raw';
@@ -45,21 +46,25 @@ export class GlobalCloudEffect implements SceneEffect {
   private defaultSun=Cartesian3.normalize(new Cartesian3(-.6,-.6,.5),new Cartesian3());
   private defaultMedium=new Cartesian3(1,1,1);
   private windAngle=0;
+  private highWindAngle=0;
   private evolution=0;
   private lastTime=0;
   private pixelAngle=.001;
   private preferHdr=true;
   renderTargetMode:'RGBA16F'|'RGBA8'='RGBA8';
   private removeUpdate?:()=>void;
-  constructor(private light?:CloudLighting,private model:CloudModel={id:'global-clouds',density,lighting}){this.id=model.id;}
-  get motion(){return {angle:this.windAngle,evolution:this.evolution};}
-  setMotion(motion:{angle:number;evolution:number}){this.windAngle=motion.angle;this.evolution=motion.evolution;}
+  constructor(private light?:CloudLighting,private model:CloudModel={id:'global-clouds',density,lighting,defines:'#define LAYERED_CLOUDS\n'}){this.id=model.id;}
+  get motion(){return {angle:this.windAngle,highAngle:this.highWindAngle,evolution:this.evolution};}
+  setMotion(motion:{angle:number;highAngle?:number;evolution:number}){this.windAngle=motion.angle;this.highWindAngle=motion.highAngle??0;this.evolution=motion.evolution;}
   private get sun(){return this.light?.sunDirection()??this.defaultSun;}
   private uniforms(){
     return {u_weather:()=>this.weather!,u_noise:()=>this.noise!,u_base:()=>this.parameters.base,
       u_thickness:()=>this.parameters.thickness,u_coverage:()=>this.parameters.coverage,u_density:()=>this.parameters.density,
       u_detail:()=>this.parameters.detail,u_seed:()=>this.parameters.seed,u_windAngle:()=>this.windAngle,
-      u_evolution:()=>this.evolution,u_windSpeed:()=>this.parameters.wind,u_sun:()=>this.sun};
+      u_evolution:()=>this.evolution,u_windSpeed:()=>this.parameters.wind,u_sun:()=>this.sun,
+      u_cloudType:()=>this.parameters.type,u_highCoverage:()=>this.parameters.highCoverage,
+      u_highBase:()=>this.parameters.highBase,u_highThickness:()=>this.parameters.highThickness,
+      u_highAngle:()=>this.highWindAngle};
   }
   mount(context:EffectContext){
     this.context=context;const scene=context.viewer.scene;
@@ -73,6 +78,7 @@ export class GlobalCloudEffect implements SceneEffect {
       if(!this.paused){
         this.windAngle+=dt*this.parameters.wind*.001/6378.137;
         this.evolution+=dt*this.parameters.wind*.001*.35;
+        this.highWindAngle+=dt*this.parameters.highWind*.001/6378.137;
       }
       const p=context.viewer.camera.positionWC;
       Cartesian3.fromElements(p.x*.001,p.y*.001,p.z*.001*POLAR_SCALE,this.camera);
@@ -93,7 +99,7 @@ export class GlobalCloudEffect implements SceneEffect {
       fragmentShader:`#define CLOUD_STEPS ${quality.steps}\n#define LIGHT_STEPS ${quality.lightSteps}\n#define CLOUD_SUBSTEPS ${quality.substeps}\n`+(this.model.defines??'')+outputSource+atmosphereTransport+this.model.density+
         `uniform sampler2D depthTexture;uniform bool u_atmosphere;uniform vec3 u_camera,u_moon;
         uniform float u_pixelAngle,u_moonFraction,u_moonGain;struct CloudPhases {vec3 sun;vec3 moon;vec3 sky;vec3 horizon;};`+
-        this.model.lighting+march,
+        this.model.lighting+'\n#ifdef LAYERED_CLOUDS\n'+intervals+'\n#endif\n'+march,
       sampleMode:PostProcessStageSampleMode.LINEAR,
       uniforms:{...this.uniforms(),u_camera:()=>this.camera,u_pixelAngle:()=>this.pixelAngle,
         u_multiple:()=>this.light?.multipleScattering?.()??this.weather!,u_medium:()=>this.light?.medium?.()??this.defaultMedium,
@@ -108,6 +114,10 @@ export class GlobalCloudEffect implements SceneEffect {
     const seed=this.parameters.seed;Object.assign(this.parameters,p);const v=this.parameters;
     v.coverage=Math.max(0,Math.min(1,v.coverage));v.base=Math.max(.2,Math.min(15,v.base));v.thickness=Math.max(.5,Math.min(12,v.thickness));
     v.density=Math.max(0,Math.min(4,v.density));v.detail=Math.max(0,Math.min(1,v.detail));v.seed=Math.max(0,Math.min(9999,Math.round(v.seed)));
+    v.type=Math.max(0,Math.min(3,Math.round(v.type)));v.highCoverage=Math.max(0,Math.min(1,v.highCoverage));
+    // Disjoint shells make exact front-to-back interval ordering inexpensive.
+    v.highBase=Math.max(v.base+v.thickness+.5,Math.min(32,v.highBase));
+    v.highThickness=Math.max(.3,Math.min(4,v.highThickness));v.highWind=Math.max(0,Math.min(200,v.highWind));
     if(v.seed!==seed&&this.weather)this.weather.copyFrom({source:{width:WEATHER_WIDTH,height:WEATHER_HEIGHT,arrayBufferView:createWeather(v.seed)}});
   }
   setQuality(value:CloudQuality){if(this.quality===value)return;this.quality=value;this.buildStage();}
@@ -115,14 +125,17 @@ export class GlobalCloudEffect implements SceneEffect {
   setHdrEnabled(value:boolean){if(value===this.preferHdr)return;this.preferHdr=value;this.buildStage();}
   setEnabled(value:boolean){this.enabled=value;if(this.stage)this.stage.enabled=value;}
   setPaused(value:boolean){this.paused=value;}
-  reset(){this.windAngle=0;this.evolution=0;this.updateParameters(cloudDefaults);}
+  reset(){this.windAngle=0;this.highWindAngle=0;this.evolution=0;this.updateParameters(cloudDefaults);}
   focus(){this.view('below');}
-  view(mode:'below'|'inside'|'above'|'global'){
+  view(mode:CloudView){
     if(!this.context)return;const camera=this.context.viewer.camera;
     camera.lookAtTransform(Matrix4.IDENTITY);
-    const heights={below:800,inside:(this.parameters.base+this.parameters.thickness*.4)*1000,above:(this.parameters.base+this.parameters.thickness+3)*1000,global:17_000_000};
+    const p=this.parameters;
+    const profileTop=this.id==='global-clouds'?(p.type===1?.26:p.type===2?.58:1):1;
+    const heights={below:Math.max(20,Math.min(800,p.base*1000-200)),inside:(p.base+p.thickness*profileTop*.4)*1000,above:(p.base+p.thickness+3)*1000,
+      between:(p.base+p.thickness+p.highBase)*500,high:(p.highBase+p.highThickness+2)*1000,global:17_000_000};
     camera.flyTo({destination:Cartesian3.fromDegrees(-97.52,35.46,heights[mode]),duration:1.4,
-      orientation:{heading:CesiumMath.toRadians(mode==='global'?0:245),pitch:CesiumMath.toRadians(mode==='global'?-90:mode==='above'?-18:mode==='inside'?0:12),roll:0}});
+      orientation:{heading:CesiumMath.toRadians(mode==='global'?0:245),pitch:CesiumMath.toRadians(mode==='global'?-90:mode==='above'||mode==='high'?-18:mode==='inside'||mode==='between'?0:12),roll:0}});
   }
   destroy(){
     if(!this.context)return;this.removeUpdate?.();

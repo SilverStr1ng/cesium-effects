@@ -1,13 +1,13 @@
 import {GlobalCloudEffect,type CloudLighting} from '../global-clouds/GlobalCloudEffect';
 import {WaterCloudEffect} from './WaterCloudEffect';
-import type {CloudParameters,CloudQuality} from '../global-clouds/config';
+import type {CloudParameters,CloudQuality,CloudView} from '../global-clouds/config';
 import type {EffectContext} from '../types';
 
 export type CloudMode='cellular'|'water';
 /** Keeps A/B settings and motion aligned. Only the selected stage renders. */
 export class CloudComparison {
   private effects:Record<CloudMode,GlobalCloudEffect>;
-  mode:CloudMode='water';
+  mode:CloudMode='cellular';
   enabled=true;
   constructor(light?:CloudLighting){this.effects={cellular:new GlobalCloudEffect(light),water:new WaterCloudEffect(light)};}
   private get active(){return this.effects[this.mode];}
@@ -29,6 +29,6 @@ export class CloudComparison {
   setPaused(value:boolean){for(const effect of Object.values(this.effects))effect.setPaused(value);}
   setMoonLight(value:number){for(const effect of Object.values(this.effects))effect.moonLight=Math.max(0,Math.min(4,value));}
   reset(){for(const effect of Object.values(this.effects))effect.reset();}
-  view(mode:'below'|'inside'|'above'|'global'){this.active.view(mode);}
+  view(mode:CloudView){this.active.view(mode);}
   destroy(){for(const effect of Object.values(this.effects))effect.destroy();}
 }

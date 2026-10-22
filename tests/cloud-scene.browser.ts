@@ -30,11 +30,13 @@ try{
   if(query.has('time'))viewer.clock.currentTime=JulianDate.fromIso8601(query.get('time')!);
   if(query.has('moonLight'))clouds.moonLight=Number(query.get('moonLight'));
   if(query.has('coverage'))clouds.updateParameters({coverage:Number(query.get('coverage'))});
+  for(const key of ['type','highCoverage','highBase','highThickness','highWind'] as const)
+    if(query.has(key))clouds.updateParameters({[key]:Number(query.get(key))});
   const quality=query.get('quality')??'medium';
   if(['low','medium','high'].includes(quality))clouds.setQuality(quality as CloudQuality);
   const view=query.get('view')??'above';
-  const height=view==='below'?800:view==='inside'?3020:view==='global'?17000000:8300;
-  const pitch=view==='below'?12:view==='inside'?0:view==='global'?-90:-18;
+  const height=view==='below'?800:view==='inside'?3020:view==='global'?17000000:view==='high'?12500:view==='between'?7000:8300;
+  const pitch=view==='below'?12:view==='inside'||view==='between'?0:view==='global'?-90:-18;
   viewer.camera.setView({destination:Cartesian3.fromDegrees(-97.52,35.46,height),
     orientation:{heading:CesiumMath.toRadians(view==='global'?0:245),pitch:CesiumMath.toRadians(pitch),roll:0}});
   if(view==='moon')viewer.camera.setView(cloudComparisonView(viewer.clock.currentTime,true));

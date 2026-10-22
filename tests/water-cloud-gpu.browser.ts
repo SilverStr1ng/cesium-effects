@@ -1,7 +1,7 @@
 import {Cartesian3} from 'cesium';
 import {POLAR_SCALE} from '../src/effects/hillaire-atmosphere/atmosphereMath';
 import density from '../src/effects/water-clouds/shaders/density.glsl?raw';
-import lighting from '../src/effects/water-clouds/shaders/lighting.glsl?raw';
+import lighting from '../src/effects/global-clouds/shaders/droplet-lighting.glsl?raw';
 import transport from '../src/effects/hillaire-atmosphere/shaders/integrate.glsl?raw';
 import {createCumulusNoise,CUMULUS_NOISE_SIZE as NOISE_SIZE} from '../src/effects/global-clouds/CumulusNoise';
 import {createWeather,WEATHER_WIDTH,WEATHER_HEIGHT} from '../src/effects/global-clouds/WeatherField';

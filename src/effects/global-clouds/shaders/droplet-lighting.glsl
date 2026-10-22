@@ -22,6 +22,15 @@ CloudPhases scatteringPhases(vec3 d){
     return CloudPhases(waterPhases(dot(d,u_sun)),waterPhases(dot(d,u_moon)),sky,horizon);
 }
 float waterLightDepth(vec3 p,vec3 light,float rho,float footprint){
+    #ifdef LAYERED_CLOUDS
+    // Thin ice uses a bounded local column approximation, avoiding another cone
+    // march per high-cloud step. This does not model shadows between layers.
+    if(cloudLayer==1){
+        float h=clamp((length(p)-Rg-u_highBase)/u_highThickness,0.,1.);
+        float mu=dot(normalize(p),light);
+        return rho*min(8.,u_highThickness*(mu>0.?1.-h:h)/max(.08,abs(mu)))*.5;
+    }
+    #endif
     vec3 axis=abs(light.z)>.99?vec3(0,1,0):vec3(0,0,1);
     vec3 tangent=normalize(cross(axis,light)),bitangent=cross(light,tangent);
     // Local cone transport models softened droplet self-shadow. It deliberately
@@ -50,9 +59,16 @@ vec3 waterDirectional(vec3 p,vec3 light,vec3 phase,float rho,float footprint){
 vec3 illumination(vec3 p,float rho,float footprint,CloudPhases phases){
     vec3 up=normalize(p);float sunHeight=dot(up,u_sun),moonHeight=dot(up,u_moon);
     float h=clamp((length(p)-Rg-u_base)/u_thickness,0.,1.);
+    #ifdef LAYERED_CLOUDS
+    h=clamp((length(p)-Rg-layerBase())/layerThickness(),0.,1.);
+    #endif
     vec3 light=vec3(0);
     float powder=mix(1.,1.-exp(-rho/16.*2.),.7);
     float baseShadow=mix(1.,mix(.15,1.,smoothstep(0.,.13,h)),.88);
+    #ifdef LAYERED_CLOUDS
+    powder=cloudLayer==1?1.:mix(1.,1.-exp(-rho/7.*2.),.7);
+    if(cloudLayer==1)baseShadow=1.;
+    #endif
     if(sunHeight>-.08)light+=waterDirectional(p,u_sun,phases.sun,rho,footprint)*vec3(1.6,1.55,1.47)*powder*baseShadow;
     // Night adaptation is deliberately separate from the displayed moon disc.
     // Phase and Earth occlusion still apply. At noon this entire light march skips.

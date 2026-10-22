@@ -4,6 +4,9 @@ import display from '../src/scene/display.glsl?raw';
 import {createCumulusNoise,CUMULUS_NOISE_SIZE as NOISE_SIZE} from '../src/effects/global-clouds/CumulusNoise';
 import {createWeather,WEATHER_WIDTH,WEATHER_HEIGHT} from '../src/effects/global-clouds/WeatherField';
 import common from '../src/effects/hillaire-atmosphere/shaders/common.glsl?raw';
+import intervals from '../src/effects/global-clouds/shaders/intervals.glsl?raw';
+import lighting from '../src/effects/global-clouds/shaders/droplet-lighting.glsl?raw';
+import transport from '../src/effects/hillaire-atmosphere/shaders/integrate.glsl?raw';
 
 const output=document.querySelector('#result')!;
 try{
@@ -21,15 +24,18 @@ try{
   gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,WEATHER_WIDTH,WEATHER_HEIGHT,0,gl.RGBA,gl.UNSIGNED_BYTE,createWeather(13));
   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.REPEAT);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
-  function run(source:string,main:string,parameters:Record<string,number>={}){
+  function run(source:string,main:string,parameters:Record<string,number>={},vectors:Record<string,number[]>={}){
     const fragment=shader(gl.FRAGMENT_SHADER,'#version 300 es\nprecision highp float;\nout vec4 out_FragColor;\n'+source+main),program=gl.createProgram()!;
     gl.attachShader(program,vertex);gl.attachShader(program,fragment);gl.linkProgram(program);
     if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(program)!);
     gl.useProgram(program);gl.uniform1i(gl.getUniformLocation(program,'u_noise'),0);
     gl.uniform1i(gl.getUniformLocation(program,'u_weather'),1);gl.uniform1f(gl.getUniformLocation(program,'u_exposure'),1.25);gl.uniform1f(gl.getUniformLocation(program,'u_seed'),13);
-    for(const [name,value] of Object.entries({u_base:1.5,u_thickness:3.8,u_coverage:.85,u_density:1.1,u_detail:.55,u_windAngle:0,u_windSpeed:24,u_evolution:0,...parameters}))gl.uniform1f(gl.getUniformLocation(program,name),value);
+    for(const name of ['u_transmittance','u_multiple'])gl.uniform1i(gl.getUniformLocation(program,name),1);
+    for(const [name,value] of Object.entries({u_base:1.5,u_thickness:3.8,u_coverage:.85,u_density:1.1,u_detail:.55,u_windAngle:0,u_windSpeed:24,u_evolution:0,u_cloudType:0,u_highBase:9,u_highThickness:1.5,u_highCoverage:.35,u_highAngle:0,u_moonFraction:1,u_moonGain:1,...parameters}))gl.uniform1f(gl.getUniformLocation(program,name),value);
+    for(const [name,v] of Object.entries(vectors))gl.uniform3f(gl.getUniformLocation(program,name),v[0],v[1],v[2]);
     gl.viewport(0,0,512,1);gl.drawArrays(gl.TRIANGLES,0,3);
     const bytes=new Uint8Array(512*4);gl.readPixels(0,0,512,1,gl.RGBA,gl.UNSIGNED_BYTE,bytes);
+    if(gl.getError()!==gl.NO_ERROR)throw new Error('WebGL draw failed');
     gl.deleteProgram(program);gl.deleteShader(fragment);return bytes;
   }
   const field=run(common+density,`void main(){float i=mod(floor(gl_FragCoord.x),256.);vec3 p=vec3(i*13.17-4000.,sin(i*2.1)*5000.,cos(i*.7)*4000.);if(gl_FragCoord.x>256.)p.x+=900.;out_FragColor=vec4(regionalNoise(p,5.),0,1);}`);
@@ -69,15 +75,59 @@ try{
   let clearRays=0,cloudyRays=0;for(let i=0;i<512;i++){if(groundSky[i*4]>128)clearRays++;if(groundSky[i*4]<26)cloudyRays++;}
   let boundViolation=0,thickCores=0;
   for(let i=0;i<512;i++){boundViolation=Math.max(boundViolation,(body[i*4]-body[i*4+1])/255);if(body[i*4]/255*8>5)thickCores++;}
+  const ordered=run(common+density+intervals,`void main(){
+    int mode=int(mod(floor(gl_FragCoord.x),8.));vec3 p=vec3(0,0,Rg+.8),d=vec3(0,0,1);float maximum=1e8;
+    if(mode==1)p.z=Rg+7.;
+    if(mode==2){p.z=Rg+7.;d.z=-1.;}
+    if(mode==3){p.z=Rg+9.7;d.z=-1.;}
+    if(mode==4){p.z=Rg+17000.;d.z=-1.;}
+    if(mode==5){p=vec3(-400,0,Rg+1.);d=vec3(1,0,0);}
+    if(mode==6)maximum=2.;
+    if(mode==7){p.z=Rg+17000.;d=vec3(1,0,0);}
+    vec2 parts[4];int layers[4];cloudIntervals(p,d,maximum,parts,layers);
+    float count=0.,bits=0.,last=0.,valid=1.;
+    for(int j=0;j<4;j++)if(parts[j].y>parts[j].x){
+      float base=layers[j]==0?u_base:u_highBase,thickness=layers[j]==0?u_thickness:u_highThickness;
+      float altitude=length(p+d*(parts[j].x+parts[j].y)*.5)-Rg;
+      if(parts[j].x<last-.01||parts[j].x<0.||parts[j].y>maximum||altitude<base-.02||altitude>base+thickness+.02)valid=0.;
+      last=parts[j].y;bits+=float(layers[j])*pow(2.,count);count+=1.;
+    }
+    out_FragColor=vec4(count/4.,bits/15.,valid,1);
+  }`);
+  const expectedCounts=[2,1,1,2,2,4,1,0],expectedBits=[2,1,0,1,1,9,0,0];let orderFailures=0;
+  for(let i=0;i<512;i++)if(Math.round(ordered[i*4]/255*4)!==expectedCounts[i%8]||Math.round(ordered[i*4+1]/255*15)!==expectedBits[i%8]||ordered[i*4+2]!==255)orderFailures++;
+  const profileFixture=`void main(){float i=floor(gl_FragCoord.x),h=(mod(i,32.)+.5)/32.;
+    vec3 n=normalize(vec3(-.106,-.808,.580)),east=normalize(cross(vec3(0,0,1),n));
+    vec3 p=normalize(n*(Rg+u_base)+east*floor(i/32.)*.7)*(Rg+u_base+h*u_thickness);
+    out_FragColor=vec4(cloudDensity(p,.01,false)/8.,0,0,1);}`;
+  const profiles=[1,2,3].map(type=>run(common+density,profileFixture,{u_cloudType:type}));
+  const profileStats=profiles.map(bytes=>{let mass=0,moment=0,top=0;for(let i=0;i<512;i++){const h=(i%32+.5)/32.;mass+=bytes[i*4];moment+=bytes[i*4]*h;if(bytes[i*4]>0)top=Math.max(top,h);}return {mass,centroid:moment/Math.max(1,mass),top};});
+  const highFixture=`void main(){cloudLayer=1;float i=floor(gl_FragCoord.x);vec3 n=normalize(vec3(sin(i*.71),cos(i*.37),sin(i*.19)));
+    out_FragColor=vec4(cloudDensity(n*(Rg+u_highBase+u_highThickness*.45),.02,false),0,0,1);}`;
+  const ice=run(common+density,highFixture),noIce=run(common+density,highFixture,{u_highCoverage:0}),movedIce=run(common+density,highFixture,{u_highAngle:.004});
+  let iceCount=0,iceMax=0,iceMotion=0;for(let i=0;i<512;i++){if(ice[i*4]>2)iceCount++;iceMax=Math.max(iceMax,ice[i*4]/255);iceMotion+=((ice[i*4]-movedIce[i*4])/255)**2;}
+  const lightSource='#define LAYERED_CLOUDS\n#define LIGHT_STEPS 5\n'+common+transport+density+`
+    uniform bool u_atmosphere;uniform vec3 u_camera,u_moon;uniform float u_moonFraction,u_moonGain;
+    struct CloudPhases {vec3 sun;vec3 moon;vec3 sky;vec3 horizon;};`+lighting;
+  const moonFixture=`void main(){cloudLayer=int(mod(floor(gl_FragCoord.x),2.));vec3 p=vec3(0,0,Rg+layerBase()+layerThickness()*.5);
+    CloudPhases phases=scatteringPhases(vec3(.6,0,.8));out_FragColor=vec4(illumination(p,cloudLayer==0?3.:.12,.02,phases)*8.,1);}`;
+  const vectors={u_camera:[0,0,6378.937],u_sun:[0,0,-1],u_moon:[0,0,1]};
+  const moonOn=run(lightSource,moonFixture,{},vectors),moonOff=run(lightSource,moonFixture,{u_moonGain:0},vectors),moonNew=run(lightSource,moonFixture,{u_moonFraction:0},vectors);
+  const moonDelta=[0,0];for(let i=0;i<512;i++)moonDelta[i%2]+=(moonOn[i*4]-moonOff[i*4])/255/256;
   const checks=[{name:'900 km displacement must not repeat the regional cloud field',pass:rms>.06,rms,threshold:.06},
     {name:'12 km displacement must not repeat local cloud lobes',pass:localRms>.035,rms:localRms},
     {name:'integrate heterogeneous radiance before the display transform',pass:error<.008,actual:light[0]/255,expected,error},
     {name:'zero cloud coverage preserves the preceding background',pass:backgroundError<.005,error:backgroundError},
     {name:'scaled atmosphere depth reaches the same surface from ground to orbit',pass:endpointError<.01,maxErrorKm:endpointError},
     {name:'erosion never adds density above the base field',pass:boundViolation<=1/255,error:boundViolation},
-    {name:'water cloud fixture contains optically thick cores (200 m optical depth > 1)',pass:thickCores>16,count:thickCores},
+    {name:'main cloud fixture contains optically thick cores (200 m optical depth > 1)',pass:thickCores>16,count:thickCores},
     {name:'wind evolution deforms the field even with bulk advection frozen',pass:evolutionRms>.04,rms:evolutionRms},
-    {name:'default ground view contains both open sky and thick clouds',pass:clearRays>25&&cloudyRays>25,clearRays,cloudyRays}];
+    {name:'default ground view contains both open sky and thick clouds',pass:clearRays>25&&cloudyRays>25,clearRays,cloudyRays},
+    {name:'shell ordering is correct below, between, inside, above, tangent and depth-clipped',pass:orderFailures===0,failures:orderFailures},
+    {name:'stratus, stratocumulus and cumulus have distinct bounded vertical profiles',pass:profileStats.every(p=>p.mass>0)&&profileStats[0].top<.26&&profileStats[1].top<.58&&profileStats[0].centroid<profileStats[1].centroid&&profileStats[1].centroid<profileStats[2].centroid,profiles:profileStats},
+    {name:'high cloud is sparse, optically thin and independently disableable',pass:iceCount>10&&iceCount<400&&iceMax<.66&&noIce.every((v,i)=>i%4===3||v===0),iceCount,iceMax},
+    {name:'high wind moves its own cloud field',pass:iceMotion/512>.0001,rms:Math.sqrt(iceMotion/512)},
+    {name:'both cloud layers receive phase-dependent moonlight',pass:moonDelta.every(v=>v>.005)&&moonNew.every((v,i)=>v===moonOff[i]),moonDelta}];
   gl.deleteTexture(weather);gl.deleteTexture(noise);gl.deleteShader(vertex);
   output.textContent=JSON.stringify({passed:checks.every(x=>x.pass),checks},null,2);
   document.title=checks.every(x=>x.pass)?'PASS · Cloud GPU regressions':'FAIL · Cloud GPU regressions';
