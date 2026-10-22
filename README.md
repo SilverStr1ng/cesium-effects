@@ -2,7 +2,7 @@
 
 一个可扩展的 Cesium 特效实验项目。使用 **Cesium 1.146.0**（初始化时从 npm 查询的最新稳定版本）、Vite 8 和 TypeScript。第一个特效是三维 LBM 龙卷风。
 
-当前默认进入“全球天空”，包含独立的 [Hillaire LUT 大气](docs/atmosphere.md) 和 [全球体积云](docs/global-clouds.md)。大气接入 Cesium Clock，带可调太阳视大小、光晕与月相；云层支持地面、穿云和太空观察。左侧“观察场景”可返回 LBM 龙卷风，或通过 `/?effect=tornado` 直接打开。Cesium 默认天空大气、地面大气和雾已关闭。
+当前默认进入“全球天空”，包含独立的 [Hillaire LUT 大气](docs/atmosphere.md) 、[原版全球体积云](docs/global-clouds.md) 与 [自然水云](docs/water-clouds.md)。大气接入 Cesium Clock，带可调太阳视大小、光晕与月相；云层支持地面、穿云和太空观察。左侧“观察场景”可返回 LBM 龙卷风，或通过 `/?effect=tornado` 直接打开。Cesium 默认天空大气、地面大气和雾已关闭。
 
 ## 启动
 
@@ -28,6 +28,8 @@ VITE_CESIUM_ION_TOKEN=
 `VITE_` 变量会进入浏览器构建产物：这里应使用允许公开给前端、限制来源和资源权限的 ion Token，不要填写服务端密钥。
 
 ## 天空与云层
+
+默认显示新增的「自然水云 · Sky Pro 方法参考」。在「云层实现 · A/B 对比」中可切回原版；「白昼对比／月夜对比」加载固定场景，便于观察形态及月光散射差异。详见 [自然水云说明](docs/water-clouds.md)。
 
 - 编辑 UTC 时间或播放 Cesium Clock，太阳、月亮、地表和云光照同步变化。
 - 「散射与日月参数」中可调整大气介质、曝光、日月视大小和月面亮度；1× 为真实视直径，默认太阳 2.8×、月亮 2.2× 为可调视觉增强。
@@ -73,7 +75,7 @@ src/
 tests/lbm.test.ts
 ```
 
-新增特效时，在 `src/effects/<effect-id>/` 创建目录，实现 `SceneEffect` 的 `mount / setEnabled / setPaused / reset / focus / destroy`，然后在 `registry.ts` 注册工厂和描述。特效自身负责创建与释放资源，不要销毁共用 Viewer。大气与云分别位于 `hillaire-atmosphere/`、`global-clouds/`；界面接入独立的 `EnvironmentPanel` 和 `CloudPanel`。`scene/CloudNoise.ts` 共享确定性噪声数据，GPU 纹理由各 effect 独立持有。可以直接在其他 Cesium 应用中实例化这些 effect 并挂载，不依赖此界面。
+新增特效时，在 `src/effects/<effect-id>/` 创建目录，实现 `SceneEffect` 的 `mount / setEnabled / setPaused / reset / focus / destroy`，然后在 `registry.ts` 注册工厂和描述。特效自身负责创建与释放资源，不要销毁共用 Viewer。大气与两种云分别位于 `hillaire-atmosphere/`、`global-clouds/`、`water-clouds/`；界面接入独立的 `EnvironmentPanel` 和 `CloudPanel`。`scene/CloudNoise.ts` 共享确定性噪声数据，GPU 纹理由各 effect 独立持有。可以直接在其他 Cesium 应用中实例化这些 effect 并挂载，不依赖此界面。
 
 ```ts
 const tornado = new TornadoEffect();

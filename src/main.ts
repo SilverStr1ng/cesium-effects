@@ -10,7 +10,8 @@ import { icon } from './ui/icons';
 import { attachFrameProfiler } from './scene/FrameProfiler';
 import { AtmosphereEffect } from './effects/hillaire-atmosphere/AtmosphereEffect';
 import { mountEnvironmentPanel } from './ui/EnvironmentPanel';
-import { GlobalCloudEffect } from './effects/global-clouds/GlobalCloudEffect';
+import { CloudComparison } from './effects/water-clouds/CloudComparison';
+import {cloudComparisonView,cloudComparisonTimes} from './effects/water-clouds/comparisonView';
 import { mountCloudPanel } from './ui/CloudPanel';
 
 const root = document.querySelector<HTMLDivElement>('#app')!;
@@ -75,7 +76,7 @@ async function boot() {
   const {viewer,hasToken} = scene;
   const atmosphere=new AtmosphereEffect();
   atmosphere.mount({viewer,onStatus:notify});
-  const clouds=new GlobalCloudEffect({sunDirection:()=>atmosphere.sunDirection,moonDirection:()=>atmosphere.moonDirection,
+  const clouds=new CloudComparison({sunDirection:()=>atmosphere.sunDirection,moonDirection:()=>atmosphere.moonDirection,
     moonFraction:()=>atmosphere.moonFraction,transmittance:()=>atmosphere.transmissionTexture,atmosphereEnabled:()=>atmosphere.enabled,
     multipleScattering:()=>atmosphere.multipleScatteringTexture,medium:()=>atmosphere.mediumParameters,exposure:()=>atmosphere.parameters.exposure});
   clouds.mount({viewer,onStatus:notify});
@@ -103,7 +104,10 @@ async function boot() {
     if(tornado)effect.focusReference();else clouds.view('above');
   },viewer);
   environmentPanel.element.querySelector<HTMLSelectElement>('#experience')!.value=startTornado?'tornado':'sky';
-  const cloudPanel=mountCloudPanel(environmentPanel.element.querySelector<HTMLElement>('#environment-extra')!,clouds);
+  const cloudPanel=mountCloudPanel(environmentPanel.element.querySelector<HTMLElement>('#environment-extra')!,clouds,night=>{
+    environmentPanel.setTime(night?cloudComparisonTimes.night:cloudComparisonTimes.day);
+    viewer.camera.flyTo({...cloudComparisonView(viewer.clock.currentTime,night),duration:1.2});
+  });
   element<HTMLInputElement>('cloud-enabled').checked=!startTornado;
   tornadoPanel.hidden=!startTornado;root.classList.toggle('sky-mode',!startTornado);
   function updateSceneLabels(tornado:boolean){
@@ -121,7 +125,7 @@ async function boot() {
   await scene.setMap('natural');
   const removeProfiler=attachFrameProfiler(viewer,()=>({quality:effect.quality,parameters:{...effect.parameters},paused:effect.paused,iteration:effect.statistics.iteration,
     tornadoEnabled:effect.enabled,atmosphere:{enabled:atmosphere.enabled,clockLinked:atmosphere.clockLinked,parameters:{...atmosphere.parameters}},
-    clouds:{enabled:clouds.enabled,quality:clouds.quality,paused:clouds.paused,parameters:{...clouds.parameters}},
+    clouds:{model:clouds.mode,moonLight:clouds.moonLight,enabled:clouds.enabled,quality:clouds.quality,paused:clouds.paused,parameters:{...clouds.parameters}},
     camera:{position:Cartesian3.pack(viewer.camera.positionWC,[]),direction:Cartesian3.pack(viewer.camera.directionWC,[]),up:Cartesian3.pack(viewer.camera.upWC,[])}}));
   element('loading').classList.add('hidden');
 

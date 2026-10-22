@@ -16,3 +16,14 @@ test('lunar phase ranges from new Moon to full Moon',()=>{
   assert.equal(illuminatedFraction(new Cartesian3(1,0,0),new Cartesian3(-1,0,0)),1);
   assert.equal(illuminatedFraction(new Cartesian3(1,0,0),new Cartesian3(0,1,0)),.5);
 });
+
+// The A/B lunar preset must actually put a bright moon above the local horizon.
+test('cloud night comparison frames a visible full moon on the night side',async()=>{
+  const {cloudComparisonView,cloudComparisonTimes}=await import('../src/effects/water-clouds/comparisonView.ts');
+  const time=JulianDate.fromIso8601(cloudComparisonTimes.night),sky=celestialPositions(time);
+  const view=cloudComparisonView(time,true),up=Cartesian3.normalize(view.destination,new Cartesian3());
+  assert.ok(illuminatedFraction(sky.sun,sky.moon)>.95);
+  assert.ok(Cartesian3.dot(up,Cartesian3.normalize(sky.sun,new Cartesian3()))<-.1);
+  assert.ok(Cartesian3.dot(up,Cartesian3.normalize(sky.moon,new Cartesian3()))>.2);
+  assert.ok(view.orientation.pitch>0&&view.orientation.pitch<Math.PI/2);
+});

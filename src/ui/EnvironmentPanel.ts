@@ -61,5 +61,8 @@ export function mountEnvironmentPanel(sidebar:HTMLElement,atmosphere:AtmosphereE
     linked.checked=false;syncMode();
     const input=panel.querySelector<HTMLInputElement>('#sky-elevation')!;input.value=button.dataset.sun!;input.dispatchEvent(new Event('input'));});
   panel.querySelectorAll<HTMLButtonElement>('[data-sky-view]').forEach(button=>button.onclick=()=>atmosphere.view(button.dataset.skyView as 'ground'|'orbit'|'space'));
-  return {element:panel,destroy:()=>{removeTick();panel.remove();}};
+  return {element:panel,setTime:(iso:string)=>{
+    viewer.clock.currentTime=JulianDate.fromIso8601(iso);viewer.clock.shouldAnimate=false;
+    date.value=iso.slice(0,16);linked.checked=true;syncMode();
+  },destroy:()=>{removeTick();panel.remove();}};
 }

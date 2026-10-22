@@ -7,6 +7,7 @@ import {createRepeatingVolume,createWeatherTexture,type GpuTexture} from '../../
 import {POLAR_SCALE} from '../hillaire-atmosphere/atmosphereMath';
 import density from './shaders/density.glsl?raw';
 import march from './shaders/march.glsl?raw';
+import lighting from './shaders/lighting.glsl?raw';
 import resolve from './shaders/resolve.glsl?raw';
 import radiometry from './shaders/radiometry.glsl?raw';
 import atmosphereCommon from '../hillaire-atmosphere/shaders/common.glsl?raw';
@@ -22,8 +23,16 @@ export interface CloudLighting {
   medium?:()=>Cartesian3;
   exposure?:()=>number;
 }
+/** A cloud model supplies medium and lighting; shell/depth transport stays shared. */
+export interface CloudModel {
+  id:string;
+  density:string;
+  lighting:string;
+  defines?:string;
+}
 export class GlobalCloudEffect implements SceneEffect {
-  readonly id='global-clouds';
+  readonly id:string;
+  moonLight=1;
   readonly parameters={...cloudDefaults};
   enabled=true;paused=false;quality:CloudQuality='medium';
   private context?:EffectContext;
@@ -38,7 +47,9 @@ export class GlobalCloudEffect implements SceneEffect {
   private lastTime=0;
   private pixelAngle=.001;
   private removeUpdate?:()=>void;
-  constructor(private light?:CloudLighting){}
+  constructor(private light?:CloudLighting,private model:CloudModel={id:'global-clouds',density,lighting}){this.id=model.id;}
+  get motion(){return {angle:this.windAngle,evolution:this.evolution};}
+  setMotion(motion:{angle:number;evolution:number}){this.windAngle=motion.angle;this.evolution=motion.evolution;}
   private get sun(){return this.light?.sunDirection()??this.defaultSun;}
   private uniforms(){
     return {u_weather:()=>this.weather!,u_noise:()=>this.noise!,u_base:()=>this.parameters.base,
@@ -69,15 +80,18 @@ export class GlobalCloudEffect implements SceneEffect {
     if(!this.context)return;const stages=this.context.viewer.scene.postProcessStages;
     if(this.stage)stages.remove(this.stage);
     const quality=cloudQualities[this.quality];
-    const volume=new PostProcessStage({name:'global-cloud-volume',textureScale:quality.scale,
-      fragmentShader:`#define CLOUD_STEPS ${quality.steps}\n#define LIGHT_STEPS ${quality.lightSteps}\n#define CLOUD_SUBSTEPS ${quality.substeps}\n`+atmosphereCommon+atmosphereTransport+density+radiometry+march,
+    const volume=new PostProcessStage({name:`${this.id}-volume`,textureScale:quality.scale,
+      fragmentShader:`#define CLOUD_STEPS ${quality.steps}\n#define LIGHT_STEPS ${quality.lightSteps}\n#define CLOUD_SUBSTEPS ${quality.substeps}\n`+(this.model.defines??'')+atmosphereCommon+atmosphereTransport+this.model.density+radiometry+
+        `uniform sampler2D depthTexture;uniform bool u_atmosphere;uniform vec3 u_camera,u_moon;
+        uniform float u_pixelAngle,u_moonFraction,u_moonGain;struct CloudPhases {vec3 sun;vec3 moon;vec3 sky;vec3 horizon;};`+
+        this.model.lighting+march,
       sampleMode:PostProcessStageSampleMode.LINEAR,
       uniforms:{...this.uniforms(),u_camera:()=>this.camera,u_pixelAngle:()=>this.pixelAngle,
         u_multiple:()=>this.light?.multipleScattering?.()??this.weather!,u_medium:()=>this.light?.medium?.()??this.defaultMedium,
         u_exposure:()=>this.light?.exposure?.()??8,
-        u_moon:()=>this.light?.moonDirection()??Cartesian3.UNIT_Z,u_moonFraction:()=>this.light?.moonFraction()??0,
+        u_moon:()=>this.light?.moonDirection()??Cartesian3.UNIT_Z,u_moonFraction:()=>this.light?.moonFraction()??0,u_moonGain:()=>this.moonLight,
         u_transmittance:()=>this.light?.transmittance()??this.weather!,u_atmosphere:()=>Boolean(this.light?.atmosphereEnabled()&&this.light.transmittance()&&this.light.multipleScattering?.())}});
-    const output=new PostProcessStage({name:'global-cloud-resolve',fragmentShader:atmosphereCommon+radiometry+resolve,uniforms:{u_clouds:volume.name,u_exposure:()=>this.light?.exposure?.()??8}});
+    const output=new PostProcessStage({name:`${this.id}-resolve`,fragmentShader:atmosphereCommon+radiometry+resolve,uniforms:{u_clouds:volume.name,u_exposure:()=>this.light?.exposure?.()??8}});
     this.stage=new PostProcessStageComposite({name:this.id,stages:[volume,output],inputPreviousStageTexture:false});
     this.stage.enabled=this.enabled;stages.add(this.stage);
   }
