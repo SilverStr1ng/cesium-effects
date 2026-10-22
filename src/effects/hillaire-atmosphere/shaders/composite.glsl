@@ -7,6 +7,7 @@ uniform float u_exposure;
 uniform float u_sunRadius;
 uniform vec3 u_moon;
 uniform float u_moonRadius;
+uniform float u_moonBrightness;
 in vec2 v_textureCoordinates;
 void main(){
     vec4 background=texture(colorTexture,v_textureCoordinates);
@@ -41,7 +42,10 @@ void main(){
             vec3 normal=right*uv.x+up*uv.y-u_moon*sqrt(max(0.,1.-rr));
             float lit=max(0.,dot(normal,u_sun));
             float maria=.82+.08*sin(uv.x*17.+sin(uv.y*23.))+.06*sin(uv.y*29.+uv.x*11.);
-            vec3 moon=vec3(.72,.77,.83)*(.015+lit*.9)*maria*sunTransmission(u_transmittance,u_camera,direction);
+            // Display adaptation is applied to lunar radiance as well as the sky.
+            // Preserve the terminator/phase, with only a small earthshine floor.
+            vec3 moonRadiance=vec3(.91,.94,1.)*(.0015+lit*.14)*maria*sunTransmission(u_transmittance,u_camera,direction);
+            vec3 moon=1.-exp(-moonRadiance*u_exposure*u_moonBrightness);
             sky=mix(sky,sky+moon,1.-smoothstep(.94,1.04,rr));
         }
         // Leave stars/space visible only where atmospheric extinction is weak.

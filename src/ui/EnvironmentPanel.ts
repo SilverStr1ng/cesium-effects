@@ -12,7 +12,7 @@ export function mountEnvironmentPanel(sidebar:HTMLElement,atmosphere:AtmosphereE
     <div class="environment-presets"><button id="clock-play">播放时间</button><select id="clock-speed" aria-label="时间倍率"><option value="60">60×</option><option value="600" selected>600×</option><option value="3600">3600×</option></select><button id="moon-view">观察月亮</button></div>
     <p id="lunar-phase" class="environment-description"></p>
     <div class="environment-presets"><button data-sun="28">晴昼</button><button data-sun="1">日落</button><button data-sun="-18">夜晚</button></div>
-    <details class="environment-details"><summary>散射与太阳参数</summary><div id="atmosphere-controls"></div></details>
+    <details class="environment-details"><summary>散射与日月参数</summary><div id="atmosphere-controls"></div></details>
     <div class="environment-views"><button data-sky-view="ground">地面天空</button><button data-sky-view="orbit">轨道边缘</button><button data-sky-view="space">全球视图</button></div>
     <div id="environment-extra"></div>`;
   sidebar.querySelector('.library-heading')!.after(panel);
@@ -24,6 +24,8 @@ export function mountEnvironmentPanel(sidebar:HTMLElement,atmosphere:AtmosphereE
     {key:'ozone',name:'臭氧吸收',min:0,max:2,step:.05,unit:'×'},
     {key:'exposure',name:'天空曝光',min:1,max:16,step:.2,unit:'×'},
     {key:'sunScale',name:'太阳视大小',min:1,max:4,step:.1,unit:'×'},
+    {key:'moonScale',name:'月亮视大小',min:1,max:4,step:.1,unit:'×'},
+    {key:'moonBrightness',name:'月面亮度',min:.2,max:6,step:.1,unit:'×'},
   ];
   const controls=panel.querySelector('#atmosphere-controls')!;
   for(const spec of specs){
@@ -51,7 +53,7 @@ export function mountEnvironmentPanel(sidebar:HTMLElement,atmosphere:AtmosphereE
   const removeTick=viewer.scene.postRender.addEventListener(()=>{
     const now=performance.now();if(now-last<500)return;last=now;
     if(document.activeElement!==date)date.value=JulianDate.toIso8601(viewer.clock.currentTime).slice(0,16);
-    panel.querySelector('#lunar-phase')!.textContent=`月面照明 ${(atmosphere.moonFraction*100).toFixed(0)}% · 1× 为真实太阳视直径`;
+    panel.querySelector('#lunar-phase')!.textContent=`月面照明 ${(atmosphere.moonFraction*100).toFixed(0)}% · 日月大小 1× 为真实视直径`;
     if(linked.checked)for(const key of ['elevation','azimuth'] as const){const input=panel.querySelector<HTMLInputElement>(`#sky-${key}`)!;input.value=String(atmosphere.parameters[key]);input.previousElementSibling!.querySelector('output')!.value=atmosphere.parameters[key].toFixed(1);}
     clockButton.textContent=viewer.clock.shouldAnimate?'暂停时间':'播放时间';
   });

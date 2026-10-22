@@ -58,7 +58,8 @@ export class AtmosphereEffect implements SceneEffect {
     this.sky=new GpuLut(s,192,108,common+integrate+sky,view);
     this.stage=new PostProcessStage({name:this.id,fragmentShader:common+integrate+composite,
       uniforms:{...view,u_skyView:()=>this.sky!.texture,u_exposure:()=>this.parameters.exposure,
-        u_sunRadius:()=>this.sunRadius*this.parameters.sunScale,u_moon:()=>this.moonDirection,u_moonRadius:()=>this.moonRadius}});
+        u_sunRadius:()=>this.sunRadius*this.parameters.sunScale,u_moon:()=>this.moonDirection,
+        u_moonRadius:()=>this.moonRadius*this.parameters.moonScale,u_moonBrightness:()=>this.parameters.moonBrightness}});
     s.primitives.add(this.primitive);s.postProcessStages.add(this.stage);
     this.updateParameters({});
     this.removeClock=context.viewer.scene.preUpdate.addEventListener(()=>this.updateCelestial());
