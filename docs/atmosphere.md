@@ -1,0 +1,26 @@
+# Hillaire LUT 风格大气
+
+独立 effect：`src/effects/hillaire-atmosphere/`，注册 ID `hillaire-atmosphere`。
+
+依据 Sébastien Hillaire 的 [A Scalable and Production Ready Sky and Atmosphere Rendering Technique (2020)](https://sebh.github.io/publications/egsr2020.pdf) 中的 LUT 分解与各向同性高阶散射闭合思想独立实现。不是 UE 源码移植，也未包含商业 Sky Pro 源码。
+
+## 渲染流程
+
+1. 256×64 透射率 LUT：高度平方映射集中采样低空，64 步 Beer–Lambert 积分；包含 Rayleigh、Mie 消光、臭氧吸收和行星遮挡。
+2. 32×32 多重散射 LUT：24 个 Fibonacci 球面方向、每方向 24 步积分，用 `L / (1 − f)` 近似高阶各向同性散射，包含近似地表反射。
+3. 192×108 天空视图 LUT：地平线附近更密集的角度采样，32 步积分。基础 LUT 仅在介质变化时更新；天空 LUT 在太阳/介质/相机位置变化时更新。转头直接采样同一全天球 LUT。
+4. 合成：低空背景查天空 LUT；太空视角与不透明场景的空气透视使用 24 步积分，读取基础 LUT。太阳圆盘单独绘制并经过大气透射。
+
+LUT 使用固定尺寸 GPU ComputeCommand 和 RGBA8 纹理；辐亮度用平方根压缩编码，无需浮点颜色附件扩展。与 Cesium 内部渲染 API 的接口集中于 `src/scene/GpuLut.ts`，固定到 Cesium 1.146.0。
+
+世界坐标以公里为积分单位；WGS84 极轴缩放到等效球体，使地面/极区不会与球形大气错开。椭球光程因此是近似。这里没有 UE 的视锥 3D aerial-perspective LUT、真实体积阴影或 HDR 曝光管线；不宣称与 UE 完全等价。
+
+## 场景与控制
+
+默认打开“全球天空”，可切换回原龙卷风。大气拥有独立开关、Rayleigh / Mie / 臭氧浓度、曝光、太阳高度与方位，并提供晴昼、日落、夜晚、地面、轨道和全球视角。太阳角度以俄克拉荷马实验位置的 ENU 为参考，转换为统一 ECEF 光照方向，整个地球共享同一个太阳。
+
+Cesium `SkyAtmosphere.show`、`globe.showGroundAtmosphere` 和 `fog.enabled` 均关闭，默认太阳圆盘也关闭。地表使用同一太阳的 DirectionalLight，避免近地视角的 Cesium 默认“全天照亮”淡出。effect 销毁时释放三张 LUT、着色器、计算 primitive 和合成阶段，并恢复挂载前的场景状态。
+
+## 验证
+
+`npm test` 覆盖球体求交、地球遮挡、真空透射率、消光非负、光谱顺序、低空/高空透射和积分收敛。浏览器实际检查 GLSL 编译、晴昼/日落/夜晚、全球视角与独立开关；性能可用 `/?benchmark` 中的 CPU/GPU 采样工具观察。

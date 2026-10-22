@@ -2,6 +2,8 @@
 
 一个可扩展的 Cesium 特效实验项目。使用 **Cesium 1.146.0**（初始化时从 npm 查询的最新稳定版本）、Vite 8 和 TypeScript。第一个特效是三维 LBM 龙卷风。
 
+当前默认进入“全球天空”，包含独立的 [Hillaire LUT 大气](docs/atmosphere.md)。左侧“观察场景”可返回 LBM 龙卷风，或通过 `/?effect=tornado` 直接打开。Cesium 默认天空大气、地面大气和雾已关闭。
+
 ## 启动
 
 需要 Node.js **22.12+** 或 **24+**。

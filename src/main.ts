@@ -8,6 +8,8 @@ import { TornadoEffect } from './effects/lbm-tornado/TornadoEffect';
 import { defaults, qualities, type TornadoParameters, type Quality } from './effects/lbm-tornado/config';
 import { icon } from './ui/icons';
 import { attachFrameProfiler } from './scene/FrameProfiler';
+import { AtmosphereEffect } from './effects/hillaire-atmosphere/AtmosphereEffect';
+import { mountEnvironmentPanel } from './ui/EnvironmentPanel';
 
 const root = document.querySelector<HTMLDivElement>('#app')!;
 const controls: {key: keyof TornadoParameters; label: string; min: number; max: number; step: number; unit: string}[] = [
@@ -69,13 +71,42 @@ function notify(message: string, error = false) {
 async function boot() {
   const scene = await createScene(element('cesium-container'), notify);
   const {viewer,hasToken} = scene;
+  const atmosphere=new AtmosphereEffect();
+  atmosphere.mount({viewer,onStatus:notify});
   if (hasToken) element('token-note').innerHTML = `${icon('info',16)}<span>Cesium ion Token 已配置<small>可切换卫星影像底图</small></span>`;
   const initialEffect = effectRegistry[0].create();
   if (!(initialEffect instanceof TornadoEffect)) throw new Error('Invalid initial effect');
   const effect = initialEffect;
+  const startTornado=new URLSearchParams(location.search).get('effect')==='tornado';
+  effect.enabled=startTornado;
   effect.mount({viewer,onStatus:notify});
-  if (new URLSearchParams(location.search).has('benchmark')) effect.focus();
-  else effect.focusReference();
+  if(startTornado)effect.focusReference();else atmosphere.focus();
+  const sidebar=document.querySelector<HTMLElement>('.sidebar')!;
+  const tornadoPanel=document.createElement('section');tornadoPanel.className='tornado-panel';
+  const bottom=sidebar.querySelector('.sidebar-bottom')!;
+  let next=sidebar.querySelector('.effect-card');
+  while(next&&next!==bottom){const following=next.nextElementSibling;tornadoPanel.append(next);next=following;}
+  bottom.before(tornadoPanel);
+  const environmentPanel=mountEnvironmentPanel(sidebar,atmosphere,tornado=>{
+    effect.setEnabled(tornado);element<HTMLInputElement>('enabled').checked=tornado;
+    tornadoPanel.hidden=!tornado;root.classList.toggle('sky-mode',!tornado);
+    referenceView.hidden=!tornado;
+    updateSceneLabels(tornado);
+    if(tornado)effect.focusReference();else atmosphere.focus();
+  });
+  environmentPanel.element.querySelector<HTMLSelectElement>('#experience')!.value=startTornado?'tornado':'sky';
+  tornadoPanel.hidden=!startTornado;root.classList.toggle('sky-mode',!startTornado);
+  function updateSceneLabels(tornado:boolean){
+    document.querySelector('.scene-heading h1')!.textContent=tornado?'风暴，有迹可循。':'天空，层层可见。';
+    document.querySelector('.scene-heading p')!.textContent=tornado?'LBM 龙卷风 — 三维流体实验':'行星大气 — 从地面到太空';
+    document.querySelector('.scene-heading .eyebrow')!.textContent=tornado?'EXPERIMENT 001 / ATMOSPHERE':'PLANETARY / ATMOSPHERE';
+    document.querySelector('.breadcrumb strong')!.textContent=tornado?'LBM 龙卷风':'全球天空';
+  }
+  updateSceneLabels(startTornado);
+  element<HTMLInputElement>('enabled').checked=startTornado;
+  const natural=document.createElement('option');natural.value='natural';natural.textContent='自然地球 · 本地';
+  element<HTMLSelectElement>('map').prepend(natural);element<HTMLSelectElement>('map').value='natural';
+  await scene.setMap('natural');
   const removeProfiler=attachFrameProfiler(viewer,()=>({quality:effect.quality,parameters:{...effect.parameters},paused:effect.paused,iteration:effect.statistics.iteration,
     camera:{position:Cartesian3.pack(viewer.camera.positionWC,[]),direction:Cartesian3.pack(viewer.camera.directionWC,[]),up:Cartesian3.pack(viewer.camera.upWC,[])}}));
   element('loading').classList.add('hidden');
@@ -123,9 +154,10 @@ async function boot() {
   let elapsed = 0;
   element('restart').addEventListener('click',()=>{ failed=false; elapsed=0; effect.reset(); });
   element<HTMLSelectElement>('speed').addEventListener('change',event=>effect.updateParameters({speed:Number((event.target as HTMLSelectElement).value)}));
-  element('focus').addEventListener('click',()=>{ effect.focus(); setOrbitButton(false); });
+  element('focus').addEventListener('click',()=>{ if(root.classList.contains('sky-mode'))atmosphere.focus();else effect.focus(); setOrbitButton(false); });
   const referenceView=document.createElement('button');
   referenceView.id='reference-view';
+  referenceView.hidden=!startTornado;
   referenceView.className='reference-view';
   referenceView.textContent='3:42 · 云冠近景';
   referenceView.title='以视频 3:42 为参考的云冠观察机位';
@@ -174,7 +206,7 @@ async function boot() {
     element('elapsed').textContent=`${String(Math.floor(elapsed/60)).padStart(2,'0')}:${String(Math.floor(elapsed%60)).padStart(2,'0')}`;
     element('orientation').style?.setProperty('--heading',`${-viewer.camera.heading}rad`);
   });
-  const dispose=()=>{ clearTimeout(noticeTimer); window.removeEventListener('keydown',keyHandler); removeProfiler(); removeStats(); effect.destroy(); if (!viewer.isDestroyed()) viewer.destroy(); };
+  const dispose=()=>{ clearTimeout(noticeTimer); window.removeEventListener('keydown',keyHandler); removeProfiler(); removeStats(); environmentPanel.destroy(); effect.destroy(); atmosphere.destroy(); if (!viewer.isDestroyed()) viewer.destroy(); };
   window.addEventListener('pagehide',dispose,{once:true});
   import.meta.hot?.dispose(()=>{window.removeEventListener('pagehide',dispose);dispose();});
 }

@@ -18,20 +18,17 @@ export async function createScene(container: HTMLElement, onStatus: (message: st
   });
   const scene = viewer.scene;
   const localLayer = viewer.imageryLayers.get(0);
-  localLayer.brightness = .28;
-  localLayer.saturation = .15;
+  localLayer.brightness = 1;
+  localLayer.saturation = 1;
   viewer.resolutionScale = Math.min(window.devicePixelRatio || 1, 1.5) / (window.devicePixelRatio || 1);
   scene.globe.depthTestAgainstTerrain = true;
-  scene.globe.enableLighting = false;
+  scene.globe.enableLighting = true;
+  scene.globe.showGroundAtmosphere = false;
   scene.globe.baseColor = Color.fromCssColorString('#4e5b50');
   scene.backgroundColor = Color.fromCssColorString('#0b151b');
   if (scene.skyBox) scene.skyBox.show = true;
-  if (scene.skyAtmosphere) {
-    scene.skyAtmosphere.saturationShift = -.65;
-    scene.skyAtmosphere.brightnessShift = -.5;
-  }
-  scene.fog.density = .00012;
-  scene.fog.minimumBrightness = .35;
+  if (scene.skyAtmosphere) scene.skyAtmosphere.show = false;
+  scene.fog.enabled = false;
   scene.postProcessStages.fxaa.enabled = true;
   viewer.clock.currentTime = JulianDate.fromIso8601('2026-06-21T17:00:00Z');
   viewer.screenSpaceEventHandler.removeInputAction(ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
@@ -92,7 +89,9 @@ export async function createScene(container: HTMLElement, onStatus: (message: st
     if (satellite) satellite.show = mode === 'satellite';
     ground.show = mode === 'lab';
     for (const ring of rings) ring.show = mode === 'lab';
-    onStatus(mode === 'lab' ? '已切换到实验网格' : '已切换到卫星影像');
+    localLayer.brightness=mode==='lab'?.28:1;
+    localLayer.saturation=mode==='lab'?.15:1;
+    onStatus(mode === 'lab' ? '已切换到实验网格' : mode==='satellite'?'已切换到卫星影像':'已切换到自然地球');
     return true;
   }
   return { viewer, hasToken: Boolean(token), setMap, setGuides: (show: boolean) => { for (const ring of rings) ring.show = show && ground.show; } };
