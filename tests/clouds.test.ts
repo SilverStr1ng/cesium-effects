@@ -30,4 +30,17 @@ test('weather is continuous across longitude seam and at both poles',()=>{
   }
   const first=createWeather(),second=createWeather();assert.deepEqual(first,second);
   assert.equal(first.length,WEATHER_WIDTH*WEATHER_HEIGHT*4);
+  for(const row of [0,WEATHER_HEIGHT-1])for(let x=1;x<WEATHER_WIDTH;x++)for(let c=0;c<4;c++)
+    assert.equal(first[(row*WEATHER_WIDTH+x)*4+c],first[row*WEATHER_WIDTH*4+c],'pole texels must be independent of longitude');
+});
+
+test('weather seeds change the same planetary locations deterministically',()=>{
+  let change=0;
+  for(let i=0;i<128;i++){
+    const lon=i*.137-3,lat=Math.sin(i*.71)*1.5;
+    const a=weatherAt(lon,lat,13),b=weatherAt(lon,lat,144);
+    assert.deepEqual(a,weatherAt(lon,lat,13));
+    a.forEach((v,c)=>{assert.ok(v>=0&&v<=1);change+=(v-b[c])**2;});
+  }
+  assert.ok(Math.sqrt(change/(128*4))>.1,'a new seed must change cloud coverage and regional structure');
 });

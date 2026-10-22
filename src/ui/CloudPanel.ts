@@ -8,7 +8,8 @@ export function mountCloudPanel(parent:HTMLElement,cloud:GlobalCloudEffect){
     <div class="environment-views"><button data-cloud-view="below">云下</button><button data-cloud-view="inside">云中</button><button data-cloud-view="above">云上</button><button data-cloud-view="global">全球云系</button></div>
     <div id="cloud-controls"></div>
     <label class="environment-label" for="cloud-quality">云渲染质量</label><select id="cloud-quality"><option value="low">流畅 · 40 步 / 50%</option><option value="medium" selected>均衡 · 64 步 / 65%</option><option value="high">精细 · 96 步 / 100%</option></select>
-    <div class="environment-presets"><button id="cloud-pause">暂停风场</button><button id="cloud-reset">重置云层</button></div>
+    <label class="environment-label" for="cloud-seed">天气种子</label><input id="cloud-seed" type="number" min="0" max="9999" step="1" value="${cloud.parameters.seed}">
+    <div class="environment-presets"><button id="cloud-pause">暂停风场</button><button id="cloud-reset">重置云层</button><button id="cloud-new-weather">更换天气</button></div>
     <p class="environment-description">风速按真实秒推进；太阳与月亮跟随 Cesium 时间。</p>`;
   parent.append(panel);
   const specs:{key:keyof CloudParameters;label:string;min:number;max:number;step:number;unit:string}[]=[
@@ -32,7 +33,10 @@ export function mountCloudPanel(parent:HTMLElement,cloud:GlobalCloudEffect){
   panel.querySelector<HTMLSelectElement>('#cloud-quality')!.onchange=e=>cloud.setQuality((e.target as HTMLSelectElement).value as CloudQuality);
   const pause=panel.querySelector<HTMLButtonElement>('#cloud-pause')!;
   pause.onclick=()=>{cloud.setPaused(!cloud.paused);pause.textContent=cloud.paused?'继续风场':'暂停风场';};
-  panel.querySelector<HTMLButtonElement>('#cloud-reset')!.onclick=()=>{cloud.reset();syncs.forEach(sync=>sync());};
+  const seed=panel.querySelector<HTMLInputElement>('#cloud-seed')!;
+  seed.onchange=()=>{const value=Number(seed.value);if(Number.isFinite(value))cloud.updateParameters({seed:value});seed.value=String(cloud.parameters.seed);};
+  panel.querySelector<HTMLButtonElement>('#cloud-new-weather')!.onclick=()=>{cloud.updateParameters({seed:(cloud.parameters.seed+137)%10000});seed.value=String(cloud.parameters.seed);};
+  panel.querySelector<HTMLButtonElement>('#cloud-reset')!.onclick=()=>{cloud.reset();seed.value=String(cloud.parameters.seed);syncs.forEach(sync=>sync());};
   panel.querySelectorAll<HTMLButtonElement>('[data-cloud-view]').forEach(button=>button.onclick=()=>cloud.view(button.dataset.cloudView as 'below'|'inside'|'above'|'global'));
   return {destroy:()=>panel.remove()};
 }

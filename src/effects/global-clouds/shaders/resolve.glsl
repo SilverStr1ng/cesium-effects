@@ -8,9 +8,10 @@ void main(){
         vec2 uv=(base+vec2(x,y)+.5)/size;
         float weight=(x==0?1.-f.x:f.x)*(y==0?1.-f.y:f.y);
         weight*=exp(-abs(distanceAt(uv)-center)/max(20.,center*.01));
-        clouds+=texture(u_clouds,uv)*weight;sum+=weight;
+        vec4 sampleCloud=texture(u_clouds,uv);sampleCloud.rgb=decodeL(sampleCloud.rgb);
+        clouds+=sampleCloud*weight;sum+=weight;
     }
-    clouds=sum>.0001?clouds/sum:texture(u_clouds,v_textureCoordinates);
+    if(sum>.0001)clouds/=sum;else{clouds=texture(u_clouds,v_textureCoordinates);clouds.rgb=decodeL(clouds.rgb);}
     vec3 background=texture(colorTexture,v_textureCoordinates).rgb;
-    out_FragColor=vec4(clouds.rgb+background*(1.-clouds.a),1);
+    out_FragColor=vec4(cloudDisplay(clouds.rgb+cloudBackground(background)*(1.-clouds.a)),1);
 }

@@ -38,6 +38,8 @@ export class AtmosphereEffect implements SceneEffect {
   private previous?: {sky:boolean;ground:boolean;fog:boolean;sun:boolean;moon:boolean;light:Light;lighting:boolean;fadeIn:number;fadeOut:number};
   private primitive={update:(frame:ComputeFrame)=>this.update(frame),isDestroyed:()=>false,destroy:()=>{}};
   get transmissionTexture(){return this.transmittance?.texture;}
+  get multipleScatteringTexture(){return this.multiple?.texture;}
+  get mediumParameters(){return this.medium;}
   mount(context:EffectContext){
     this.context=context;
     const s=context.viewer.scene;

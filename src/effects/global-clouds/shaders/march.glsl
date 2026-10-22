@@ -1,6 +1,4 @@
 uniform sampler2D depthTexture;
-uniform sampler2D u_lightCache;
-uniform sampler2D u_transmittance;
 uniform bool u_atmosphere;
 uniform vec3 u_camera,u_moon;
 uniform float u_pixelAngle,u_moonFraction;
@@ -17,31 +15,45 @@ float sceneDepth(vec2 uv){
     if(lo<=0.||hi>=1.||hi-lo>.002)return texture(depthTexture,uv).r;
     return mix(mix(z.x,z.y,f.x),mix(z.z,z.w,f.x),f.y);
 }
-vec2 cacheLayer(vec2 uv,float layer){
-    vec2 tile=vec2(mod(layer,4.),floor(layer/4.));
-    return (tile*vec2(64,32)+uv*vec2(63,31)+.5)/vec2(256,128);
-}
-vec2 cachedLight(vec3 p){
-    vec2 uv=weatherUV(p);float h=clamp((length(p)-Rg-u_base)/u_thickness*15.,0.,15.);
-    return mix(texture(u_lightCache,cacheLayer(uv,floor(h))).rg,texture(u_lightCache,cacheLayer(uv,min(15.,floor(h)+1.))).rg,fract(h));
-}
 float hg(float c,float g){return (1.-g*g)/pow(max(.01,1.+g*g-2.*g*c),1.5);}
+float opticalDepthToSun(vec3 p,float footprint){
+    float end=min(32.,max(0.,sphere(p,u_sun,Rg+u_base+u_thickness).y)),tau=0.;
+    // Expand the sample cone with distance, integrating the same density field
+    // that the camera sees. A 600 km global atlas cannot shadow 1 km cloud lobes.
+    vec3 side=normalize(cross(u_sun,abs(u_sun.z)>.9?vec3(1,0,0):vec3(0,0,1))),up=cross(u_sun,side);
+    for(int j=0;j<LIGHT_STEPS;j++){
+        float a=float(j)/float(LIGHT_STEPS),b=float(j+1)/float(LIGHT_STEPS);
+        float t0=end*a*a,t1=end*b*b,t=(t0+t1)*.5,angle=float(j)*2.39996;
+        vec3 offset=(side*cos(angle)+up*sin(angle))*t*.06;
+        tau+=cloudDensity(p+u_sun*t+offset,max(footprint,t*.035),false)*(t1-t0);
+    }
+    return tau;
+}
 vec3 illumination(vec3 p,vec3 d,float rho,float footprint){
-    vec2 cached=cachedLight(p);
-    float tau=cached.r*16.;
-    tau+=cloudDensity(p+u_sun*.35,footprint,false)*.7+cloudDensity(p+u_sun*1.1,footprint,false)*.8;
-    float mu=dot(normalize(p),u_sun),phase=.8*hg(dot(d,u_sun),.65)+.2*hg(dot(d,u_sun),-.25);
+    vec3 vertical=normalize(p);float mu=dot(vertical,u_sun),c=dot(d,u_sun);
+    float tau=opticalDepthToSun(p,footprint);
     vec2 ground=sphere(p,u_sun,Rg);
     vec3 solar=vec3(1.);
-    if(u_atmosphere){vec2 uv=vec2(mu*.5+.5,sqrt(clamp((length(p)-Rg)/100.,0.,1.)));solar=texture(u_transmittance,(uv*vec2(255,63)+.5)/vec2(256,64)).rgb;}
+    if(u_atmosphere)solar=sunTransmission(u_transmittance,p,u_sun);
     if(ground.x>0.&&ground.y>0.)solar=vec3(0);
-    float direct=exp(-tau)*phase*.65+exp(-tau*.35)*.35;
-    float inner=(1.-exp(-rho*3.))*exp(-tau*.18)*.45;
-    vec3 ambient=vec3(.32,.43,.62)*(.25+.75*cached.g)*smoothstep(-.18,.12,mu);
-    float moon=max(0.,dot(normalize(p),u_moon))*u_moonFraction;
-    return solar*(direct+inner)*1.4+ambient+vec3(.006,.009,.018)+vec3(.025,.033,.055)*moon;
+    // Successive scattering orders broaden the phase and travel farther.
+    // All orders retain optical-depth attenuation instead of a constant white fill.
+    float direct=0.,weight=1.,extinction=1.,g=.72;
+    for(int order=0;order<3;order++){
+        float phase=(.85*hg(c,g)+.15*hg(c,-.18*extinction))/(4.*PI);
+        direct+=weight*phase*exp(-tau*extinction);
+        weight*=.42;extinction*=.52;g*=.55;
+    }
+    float overhead=(cloudDensity(p+vertical*.45,footprint,false)*.9+cloudDensity(p+vertical*1.8,max(footprint,.1),false)*1.8);
+    vec3 ambient=vec3(.012,.018,.028)*smoothstep(-.18,.12,mu);
+    if(u_atmosphere)ambient=decodeL(texture(u_multiple,lutUV(p,u_sun,vec2(32))).rgb)*2.;
+    ambient*=exp(-overhead*.65)*.8+.2;
+    float height=clamp((length(p)-Rg-u_base)/u_thickness,0.,1.);
+    vec3 bounce=solar*max(0.,mu)*.012*(1.-height)*exp(-rho*1.5);
+    float moon=max(0.,dot(vertical,u_moon))*u_moonFraction*(1.-smoothstep(-.1,.05,mu));
+    return solar*direct*3.+ambient+bounce+vec3(.0004,.0006,.001)*moon;
 }
-void integrateCloud(vec3 d,vec2 segment,inout vec4 acc){
+void integrateCloud(vec3 d,vec2 segment,inout vec4 acc,inout float weightedDistance){
     if(segment.y<=segment.x)return;
     float jitter=fract(52.9829189*fract(dot(gl_FragCoord.xy,vec2(.06711056,.00583715))));
     float span=segment.y-segment.x;
@@ -56,12 +68,8 @@ void integrateCloud(vec3 d,vec2 segment,inout vec4 acc){
         if(rho>.001){
             float alpha=1.-exp(-rho*ds);
             vec3 light=illumination(p,d,rho,footprint);
-            vec3 color=1.-exp(-light*1.25);
-            // Only the lower-atmosphere portion contributes to distant cloud haze.
-            float haze=(1.-exp(-t*.008))*exp(-max(0.,length(u_camera)-Rg-8.)/20.)*.75;
-            float day=smoothstep(-.15,.1,dot(normalize(p),u_sun));
-            color=mix(color,vec3(.32,.46,.65)*day,haze);
-            acc.rgb+=(1.-acc.a)*alpha*color;acc.a+=(1.-acc.a)*alpha;
+            float weight=(1.-acc.a)*alpha;
+            acc.rgb+=weight*cloudSource(light);weightedDistance+=weight*t;acc.a+=weight;
             if(acc.a>.995)break;
         }
     }
@@ -73,11 +81,16 @@ void main(){
     if(depth>0.&&depth<1.){vec4 hit=czm_windowToEyeCoordinates(v_textureCoordinates*czm_viewport.zw+czm_viewport.xy,depth);maximum=length(hit.xyz/hit.w)*.001*length(scaled);}
     vec2 ground=sphere(u_camera,d,Rg);if(ground.x>0.)maximum=min(maximum,ground.x);
     vec2 outer=sphere(u_camera,d,Rg+u_base+u_thickness);outer=vec2(max(0.,outer.x),min(maximum,outer.y));
-    vec4 acc=vec4(0);
+    vec4 acc=vec4(0);float weightedDistance=0.;
     if(outer.y>outer.x){
         vec2 inner=sphere(u_camera,d,Rg+u_base);
-        if(inner.y<=outer.x||inner.x>=outer.y)integrateCloud(d,outer,acc);
-        else{integrateCloud(d,vec2(outer.x,min(outer.y,inner.x)),acc);if(acc.a<.995)integrateCloud(d,vec2(max(outer.x,inner.y),outer.y),acc);}
+        if(inner.y<=outer.x||inner.x>=outer.y)integrateCloud(d,outer,acc,weightedDistance);
+        else{integrateCloud(d,vec2(outer.x,min(outer.y,inner.x)),acc,weightedDistance);if(acc.a<.995)integrateCloud(d,vec2(max(outer.x,inner.y),outer.y),acc,weightedDistance);}
     }
-    out_FragColor=acc;
+    if(u_atmosphere&&acc.a>.0001){
+        vec3 airL,airT;integrateAtmosphere(u_camera,d,weightedDistance/acc.a,12,airL,airT);
+        acc.rgb=acc.rgb*airT+airL*acc.a;
+    }
+    // RGBA8 stores encoded linear radiance. Decode each texel before filtering.
+    out_FragColor=vec4(encodeL(acc.rgb),acc.a);
 }
