@@ -5,7 +5,7 @@ export function mountCloudPanel(parent:HTMLElement,cloud:CloudComparison,onLight
   const panel=document.createElement('section');panel.className='cloud-panel';
   panel.innerHTML=`<div class="environment-heading"><div><small>FX — 003</small><h2>全球体积云</h2></div><label class="switch"><input id="cloud-enabled" type="checkbox" checked aria-label="启用全球体积云"><span></span></label></div>
     <label class="environment-label" for="cloud-model">云层实现 · A/B 对比</label>
-    <select id="cloud-model"><option value="cellular" selected>Nubis 主线 · 分层云</option><option value="water">自然水云 · Sky Pro 方法参考</option></select>
+    <select id="cloud-model"><option value="cellular" selected>Nubis 主线 · 体素分层云</option><option value="water">自然水云 · Sky Pro 方法参考</option></select>
     <p id="cloud-model-note" class="environment-description">天气云顶 · 细节侵蚀 · 日月体积散射。切换保留视角、时间和参数。</p>
     <div class="environment-presets"><button id="cloud-day" title="恢复白昼默认天气和机位，暂停时间与风场">白昼对比</button><button id="cloud-night" title="加载满月、78% 云量和向月机位，暂停时间与风场">月夜对比</button></div>
     <div id="cloud-moon-control" class="control"><div class="control-label"><label for="cloud-moon-light">月光照云</label><span><output id="cloud-moon-value">1</output> ×</span></div><input id="cloud-moon-light" type="range" min="0" max="4" step="0.1" value="1"></div>
@@ -22,7 +22,7 @@ export function mountCloudPanel(parent:HTMLElement,cloud:CloudComparison,onLight
     <label class="environment-label" for="cloud-quality">云渲染质量</label><select id="cloud-quality"><option value="low">流畅 · 节省性能</option><option value="medium" selected>均衡 · 推荐</option><option value="high">精细 · 更多细节</option></select>
     <label class="environment-label" for="cloud-seed">天气种子</label><input id="cloud-seed" type="number" min="0" max="9999" step="1" value="${cloud.parameters.seed}">
     <div class="environment-presets"><button id="cloud-pause">暂停风场</button><button id="cloud-reset">重置云层</button><button id="cloud-new-weather">更换天气</button></div>
-    <p class="environment-description">风速驱动平流、云顶倾斜和形态演化；日月跟随 Cesium 时间。</p>`;
+    <p class="environment-description">风速驱动平流和形态演化；日月跟随 Cesium 时间。</p>`;
   parent.append(panel);
   for(const [id,night] of [['cloud-day',false],['cloud-night',true]] as const)
     panel.querySelector<HTMLButtonElement>(`#${id}`)!.onclick=()=>{
@@ -37,7 +37,7 @@ export function mountCloudPanel(parent:HTMLElement,cloud:CloudComparison,onLight
     panel.querySelector('#cloud-layers')!.toggleAttribute('hidden',cloud.mode!=='cellular');
     panel.querySelector('#cloud-model-note')!.textContent=cloud.mode==='water'
       ?'天气云顶 · 细节侵蚀 · 日月体积散射。切换保留视角、时间和参数。'
-      :'Nubis 云型建模 + 独立高层卷云，结合水云的日月散射。切换保留视角、时间和参数。';
+      :'三维体素云型 + 独立高层卷云，结合日月内部散射。切换保留视角、时间和参数。';
     panel.querySelector('.environment-heading small')!.textContent=cloud.mode==='water'?'FX — 004':'FX — 003';
   };
   model.onchange=()=>{cloud.setMode(model.value as CloudMode);syncModel();};syncModel();

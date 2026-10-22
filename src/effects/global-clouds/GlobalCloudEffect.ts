@@ -6,6 +6,8 @@ import {createCumulusNoise,CUMULUS_NOISE_SIZE} from './CumulusNoise';
 import {createRepeatingVolume,createWeatherTexture,type GpuTexture} from '../../scene/DynamicTexture';
 import {POLAR_SCALE} from '../hillaire-atmosphere/atmosphereMath';
 import density from './shaders/density.glsl?raw';
+import voxel from './shaders/voxel.glsl?raw';
+import {VOXEL_SIZE} from './VoxelCloudField';
 import march from './shaders/march.glsl?raw';
 import intervals from './shaders/intervals.glsl?raw';
 import lighting from './shaders/droplet-lighting.glsl?raw';
@@ -41,6 +43,14 @@ export class GlobalCloudEffect implements SceneEffect {
   private context?:EffectContext;
   private weather?:GpuTexture;
   private noise?:GpuTexture;
+  private voxels?:GpuTexture;
+  private voxelWorker?:Worker;
+  private finishReady?:()=>void;
+  ready:Promise<void>=Promise.resolve();
+  get voxelReady(){return Boolean(this.voxels);}
+  private voxelEnabled=true;
+  // Dense global banks currently cost more distance fetches than they save.
+  private skipVoxels=false;
   private stage?:PostProcessStageComposite;
   private camera=new Cartesian3();
   private defaultSun=Cartesian3.normalize(new Cartesian3(-.6,-.6,.5),new Cartesian3());
@@ -53,7 +63,7 @@ export class GlobalCloudEffect implements SceneEffect {
   private preferHdr=true;
   renderTargetMode:'RGBA16F'|'RGBA8'='RGBA8';
   private removeUpdate?:()=>void;
-  constructor(private light?:CloudLighting,private model:CloudModel={id:'global-clouds',density,lighting,defines:'#define LAYERED_CLOUDS\n'}){this.id=model.id;}
+  constructor(private light?:CloudLighting,private model:CloudModel={id:'global-clouds',density:density+voxel,lighting,defines:'#define LAYERED_CLOUDS\n'}){this.id=model.id;}
   get motion(){return {angle:this.windAngle,highAngle:this.highWindAngle,evolution:this.evolution};}
   setMotion(motion:{angle:number;highAngle?:number;evolution:number}){this.windAngle=motion.angle;this.highWindAngle=motion.highAngle??0;this.evolution=motion.evolution;}
   private get sun(){return this.light?.sunDirection()??this.defaultSun;}
@@ -71,6 +81,27 @@ export class GlobalCloudEffect implements SceneEffect {
     this.weather=createWeatherTexture(scene,WEATHER_WIDTH,WEATHER_HEIGHT,createWeather(this.parameters.seed));
     const noise=createCumulusNoise();
     this.noise=createRepeatingVolume(scene,CUMULUS_NOISE_SIZE,noise.bytes,noise.mips);
+    if(this.id==='global-clouds'){
+      this.ready=new Promise(resolve=>{this.finishReady=resolve;});
+      try{
+        const worker=new Worker(new URL('./voxel.worker.ts',import.meta.url),{type:'module'});this.voxelWorker=worker;
+        const finish=()=>{worker.terminate();this.voxelWorker=undefined;this.finishReady?.();this.finishReady=undefined;};
+        worker.onmessage=(event:MessageEvent<{bytes:Uint8Array;mips:Uint8Array[];error?:string}>)=>{
+          if(!this.context){finish();return;}
+          try{
+            if(event.data.error)throw new Error(event.data.error);
+            this.voxels=createRepeatingVolume(scene,VOXEL_SIZE,event.data.bytes,event.data.mips);
+            context.onStatus('三维体素云与距离场已就绪');
+          }catch(error){context.onStatus(`体素云生成失败，使用程序化云：${String(error)}`);}
+          finally{finish();}
+        };
+        worker.onerror=()=>{context.onStatus('体素云 worker 失败，使用程序化云');finish();};worker.postMessage({});
+      }catch(error){
+        this.voxelWorker?.terminate();this.voxelWorker=undefined;
+        this.finishReady?.();this.finishReady=undefined;
+        context.onStatus(`无法启动体素云，使用程序化云：${String(error)}`);
+      }
+    }
     this.buildStage();
     this.removeUpdate=scene.preUpdate.addEventListener(()=>{
       const now=performance.now(),dt=this.lastTime?Math.min(.1,(now-this.lastTime)*.001):0;this.lastTime=now;
@@ -102,6 +133,7 @@ export class GlobalCloudEffect implements SceneEffect {
         this.model.lighting+'\n#ifdef LAYERED_CLOUDS\n'+intervals+'\n#endif\n'+march,
       sampleMode:PostProcessStageSampleMode.LINEAR,
       uniforms:{...this.uniforms(),u_camera:()=>this.camera,u_pixelAngle:()=>this.pixelAngle,
+        u_voxels:()=>this.voxels??this.noise!,u_voxelReady:()=>Boolean(this.voxels&&this.voxelEnabled),u_skipVoxels:()=>this.skipVoxels,
         u_multiple:()=>this.light?.multipleScattering?.()??this.weather!,u_medium:()=>this.light?.medium?.()??this.defaultMedium,
         u_exposure:()=>this.light?.exposure?.()??8,
         u_moon:()=>this.light?.moonDirection()??Cartesian3.UNIT_Z,u_moonFraction:()=>this.light?.moonFraction()??0,u_moonGain:()=>this.moonLight,
@@ -123,6 +155,9 @@ export class GlobalCloudEffect implements SceneEffect {
   setQuality(value:CloudQuality){if(this.quality===value)return;this.quality=value;this.buildStage();}
   /** Also provides a deterministic fallback path for unsupported float targets. */
   setHdrEnabled(value:boolean){if(value===this.preferHdr)return;this.preferHdr=value;this.buildStage();}
+  /** Diagnostic switches compare the same field with/without acceleration. */
+  setVoxelEnabled(value:boolean){this.voxelEnabled=value;}
+  setVoxelSkipping(value:boolean){this.skipVoxels=value;}
   setEnabled(value:boolean){this.enabled=value;if(this.stage)this.stage.enabled=value;}
   setPaused(value:boolean){this.paused=value;}
   reset(){this.windAngle=0;this.highWindAngle=0;this.evolution=0;this.updateParameters(cloudDefaults);}
@@ -139,8 +174,9 @@ export class GlobalCloudEffect implements SceneEffect {
   }
   destroy(){
     if(!this.context)return;this.removeUpdate?.();
+    this.voxelWorker?.terminate();this.voxelWorker=undefined;this.finishReady?.();this.finishReady=undefined;
     const s=this.context.viewer.scene;if(this.stage)s.postProcessStages.remove(this.stage);
-    for(const t of [this.noise,this.weather])if(t&&!t.isDestroyed())t.destroy();
+    for(const t of [this.noise,this.weather,this.voxels])if(t&&!t.isDestroyed())t.destroy();this.voxels=undefined;
     this.context=undefined;
   }
 }

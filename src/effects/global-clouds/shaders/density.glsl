@@ -1,6 +1,10 @@
 precision highp sampler3D;
 uniform sampler2D u_weather;
 uniform sampler3D u_noise;
+uniform sampler3D u_voxels;
+uniform bool u_voxelReady,u_skipVoxels;
+vec4 voxelShape(vec3 p,float footprint);
+float voxelBodyDepth(vec3 p,float footprint);
 uniform float u_base,u_thickness,u_coverage,u_density,u_detail,u_windAngle,u_seed,u_evolution,u_windSpeed;
 uniform float u_cloudType,u_highBase,u_highThickness,u_highCoverage,u_highAngle;
 int cloudLayer=0;
@@ -54,6 +58,22 @@ float lowCloudDensity(vec3 p,float footprint,bool coarse){
     float threshold=mix(.76,.38,cover);
     float cluster=smoothstep(threshold-.035,threshold+.085,cell);
     if(cluster<=.001)return 0.;
+    if(u_voxelReady){
+        vec4 volume=voxelShape(p,footprint);
+        float field=volume.r-(1.-cover)*.22-(1.-cluster)*.3-pow(h,mix(4.,2.8,type))*.4;
+        if(field<=0.)return 0.;
+        if(!coarse&&footprint<.8){
+            vec4 fine=cellular(q+u_seed*.17-vec3(.3,.7,.1)*u_evolution,1.61,footprint);
+            float wisps=1.-abs(2.*fine.a-1.),billows=dot(fine.rgb,vec3(.55,.3,.15));
+            float folded=abs(2.*abs(2.*fine.g-1.)-1.);
+            float detail=mix(wisps,billows,volume.a);
+            detail=mix(detail,mix(1.-pow(folded,3.),folded*folded,volume.a),1.-smoothstep(.015,.12,footprint));
+            // Erosion only removes material, preserving the baked distance bound.
+            field-=(1.-detail)*u_detail*.28*(1.-smoothstep(.15,.8,footprint));
+        }
+        float body=smoothstep(0.,.32+min(.15,footprint*.2),field);
+        return body*cluster*smoothstep(0.,.2,cover)*smoothstep(0.,.045,h)*(1.-smoothstep(.9,1.,h))*9.*u_density;
+    }
     float shape=0.;
     float lod=1.-smoothstep(.35,3.,footprint);
     vec3 east=normalize(abs(q.z)/length(q)>.9999?vec3(1,0,0):vec3(-q.y,q.x,0));

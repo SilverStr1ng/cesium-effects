@@ -13,5 +13,5 @@ export const effectRegistry: readonly EffectDefinition[] = [
   },
   {id:'hillaire-atmosphere',name:'Hillaire LUT 大气',category:'行星 / 大气',description:'透射率、多重散射与天空视图 LUT',create:()=>new AtmosphereEffect()},
   {id:'water-clouds',name:'自然水云',category:'行星 / 天气',description:'天气高度场、边缘侵蚀与日月双光源体积散射',create:()=>new WaterCloudEffect()},
-  {id:'global-clouds',name:'Nubis 主线分层云',category:'行星 / 天气',description:'主云层云型剖面、独立高层卷云与日月体积散射',create:()=>new GlobalCloudEffect()},
+  {id:'global-clouds',name:'Nubis 主线体素云',category:'行星 / 天气',description:'三维体素主云、内部散射、云型剖面与独立高层卷云',create:()=>new GlobalCloudEffect()},
 ];

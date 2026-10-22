@@ -15,6 +15,7 @@ void integrateCloud(vec3 d,vec2 segment,CloudPhases phases,inout vec4 acc,inout 
     if(segment.y<=segment.x)return;
     float jitter=fract(52.9829189*fract(dot(gl_FragCoord.xy,vec2(.06711056,.00583715))));
     float span=segment.y-segment.x;
+    float skipUntil=segment.x,skipFootprint=0.;
     int steps=CLOUD_STEPS;
     #ifdef LAYERED_CLOUDS
     if(cloudLayer==1)steps=max(8,int(mix(float(CLOUD_STEPS)*.25,float(CLOUD_STEPS)*.75,smoothstep(20.,120.,span))));
@@ -26,6 +27,20 @@ void integrateCloud(vec3 d,vec2 segment,CloudPhases phases,inout vec4 acc,inout 
         float a=float(i)/float(steps),b=float(i+1)/float(steps);
         float t0=segment.x+mix(a,a*a,curve)*span,t1=segment.x+mix(b,b*b,curve)*span;
         float mid=(t0+t1)*.5,footprint=max(.002,mid*u_pixelAngle);
+        #ifdef LAYERED_CLOUDS
+        // Filter sub-interval detail as well as the screen pixel footprint.
+        // This prevents distant fine erosion from becoming static white specks.
+        if(cloudLayer==0&&u_voxelReady)footprint=max(footprint,(t1-t0)/float(CLOUD_SUBSTEPS)*.35);
+        if(cloudLayer==0&&u_voxelReady&&u_skipVoxels){
+            // A later interval may use a wider mip footprint than the one that
+            // established this bound. Shrink the reusable empty range first.
+            if(t1<=skipUntil-6.*max(0.,footprint-skipFootprint))continue;
+            skipUntil=t0+voxelEmptyDistance(u_camera+d*t0,footprint);skipFootprint=footprint;
+            if(t1<=skipUntil)continue;
+            // Keep the quadrature of partially occupied intervals unchanged.
+            // Only skip entire intervals that have a conservative empty bound.
+        }
+        #endif
         #ifdef LAYERED_CLOUDS
         // High-cloud fibres can be smaller than the interval along a grazing
         // ray, even when their screen footprint is tiny. Filter in both domains
@@ -47,6 +62,15 @@ void integrateCloud(vec3 d,vec2 segment,CloudPhases phases,inout vec4 acc,inout 
                 // offset for every interval creates visible contour bands.
                 offset=fract(jitter+float(i)*.61803399+float(s)*.41421356);
                 #ifdef LAYERED_CLOUDS
+                if(cloudLayer==0&&u_voxelReady){
+                    // Independent stable samples break curved bands during
+                    // close fly-through. A linear interval offset remains too
+                    // correlated across the same voxel silhouette.
+                    uint hash=uint(gl_FragCoord.x)*1973u+uint(gl_FragCoord.y)*9277u+uint(i*17+s)*26699u;
+                    hash=(hash^(hash>>16u))*2246822519u;
+                    hash=(hash^(hash>>13u))*3266489917u;hash^=hash>>16u;
+                    offset=float(hash&16777215u)/16777216.;
+                }
                 // The shallow ice medium is smooth and prefiltered; midpoint
                 // quadrature avoids projecting screen-space jitter into wisps.
                 if(cloudLayer==1)offset=.5;
