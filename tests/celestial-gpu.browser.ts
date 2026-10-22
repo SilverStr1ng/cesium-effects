@@ -1,4 +1,5 @@
 import common from '../src/effects/hillaire-atmosphere/shaders/common.glsl?raw';
+import skyParameters from '../src/effects/hillaire-atmosphere/shaders/sky-view-parameters.glsl?raw';
 import transport from '../src/effects/hillaire-atmosphere/shaders/integrate.glsl?raw';
 import composite from '../src/effects/hillaire-atmosphere/shaders/composite.glsl?raw';
 import display from '../src/scene/display.glsl?raw';
@@ -14,7 +15,7 @@ try{
     precision highp float;out vec4 out_FragColor;
     const mat4 czm_inverseProjection=mat4(1),czm_inverseView=mat4(1);const vec4 czm_viewport=vec4(0,0,256,256);
     vec4 czm_windowToEyeCoordinates(vec2 uv,float depth){return vec4(0,0,1,1);}
-    `+common+display+transport+composite);
+    `+common+skyParameters+display+transport+composite);
   const program=gl.createProgram()!;gl.attachShader(program,vertex);gl.attachShader(program,fragment);gl.linkProgram(program);
   if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(program)!);gl.useProgram(program);
   const textures:WebGLTexture[]=[];

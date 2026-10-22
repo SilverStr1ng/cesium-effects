@@ -22,15 +22,17 @@ export function mediumAt(height: number, p=atmosphereDefaults) {
 }
 /** CPU reference integrator for testing the GPU transmittance LUT. */
 export function transmittance(height: number, mu: number, p=atmosphereDefaults, steps=256) {
-  const origin=[0,0,PLANET_RADIUS+Math.max(.001,height)];
+  const origin=[0,0,PLANET_RADIUS+Math.max(0,height)];
   const direction=[Math.sqrt(Math.max(0,1-mu*mu)),0,mu];
   const ground=sphereInterval(origin,direction,PLANET_RADIUS);
-  if(ground&&ground[0]>0)return [0,0,0];
-  const end=sphereInterval(origin,direction,PLANET_RADIUS+ATMOSPHERE_HEIGHT)?.[1]??0;
-  if(end<=0)return [1,1,1];
-  const tau=[0,0,0],ds=end/steps;
+  if(ground&&ground[0]>=0&&ground[1]>0)return [0,0,0];
+  const air=sphereInterval(origin,direction,PLANET_RADIUS+ATMOSPHERE_HEIGHT);
+  if(!air)return [1,1,1];
+  const start=Math.max(0,air[0]),end=air[1];
+  if(end<=start)return [1,1,1];
+  const tau=[0,0,0],ds=(end-start)/steps;
   for(let i=0;i<steps;i++){
-    const t=(i+.5)*ds,h=Math.hypot(direction[0]*t,0,origin[2]+direction[2]*t)-PLANET_RADIUS;
+    const t=start+(i+.5)*ds,h=Math.hypot(direction[0]*t,0,origin[2]+direction[2]*t)-PLANET_RADIUS;
     const ext=mediumAt(h,p).extinction;
     for(let c=0;c<3;c++)tau[c]+=ext[c]*ds;
   }

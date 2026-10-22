@@ -2,22 +2,23 @@
 
 独立 effect：`src/effects/hillaire-atmosphere/`，注册 ID `hillaire-atmosphere`。
 
-依据 Sébastien Hillaire 的 [A Scalable and Production Ready Sky and Atmosphere Rendering Technique (2020)](https://sebh.github.io/publications/egsr2020.pdf) 中的 LUT 分解与各向同性高阶散射闭合思想独立实现。不是 UE 源码移植，也未包含商业 Sky Pro 源码。
+依据 Sébastien Hillaire 的 [A Scalable and Production Ready Sky and Atmosphere Rendering Technique (2020)](https://sebh.github.io/publications/egsr2020.pdf) 中的 LUT 分解与各向同性高阶散射闭合思想实现。透射与 SkyView 参数化参考并改写了作者的 [MIT 示例](https://github.com/sebh/UnrealEngineSkyAtmosphere/blob/master/Resources/RenderSkyCommon.hlsl)，保留 [许可](../src/effects/hillaire-atmosphere/LICENSE.hillaire)。没有包含商业 Sky Pro 源码。
 
 ## 渲染流程
 
-1. 256×64 透射率 LUT：高度平方映射集中采样低空，64 步 Beer–Lambert 积分；包含 Rayleigh、Mie 消光、臭氧吸收和行星遮挡。
+1. 256×64 透射率 LUT：按到大气顶的距离和 `sqrt(r²−Rg²)` 参数化，仅存未被地球遮挡的射线，64 步 Beer–Lambert 积分。行星遮挡在查询前解析判断，避免插值混入地球内部的零值。大气外射线先用与积分器相同的入口裁切：错过大气返回 1，地球遮挡返回 0，进入者移动到真实入口并重新计算高度和 `mu`。
 2. 32×32 多重散射 LUT：24 个 Fibonacci 球面方向、每方向 24 步积分，用 `L / (1 − f)` 近似高阶各向同性散射，包含近似地表反射。
-3. 192×108 天空视图 LUT：地平线附近更密集的角度采样，32 步积分。基础 LUT 仅在介质变化时更新；天空 LUT 在太阳/介质/相机位置变化时更新。转头直接采样同一全天球 LUT。
-4. 合成：低空背景查天空 LUT；太空视角与不透明场景的空气透视使用 24 步积分，读取基础 LUT。太阳圆盘单独绘制并经过大气透射。合成结果先写入平方根编码的 RGBA8 辐亮度目标，再显示映射。云通过可选 `CloudLighting.backgroundStage` 读取该目标，避免从已截断的白色太阳反推 HDR。
+3. 192×108 天空视图 LUT：32 步积分，围绕真实地平线 `thetaH=π−acos(sqrt(r²−Rg²)/r)` 加密角度。生成和采样共用互逆函数与 texel-center 变换，保留本模块完整周期方位角。大气内使用此 LUT，最后 5 km 平滑过渡到太空的直接积分，避免两种数值近似在边界跳变；不再于 99 km 突然切换。天空 LUT 仅随太阳/介质/相机位置更新，转头不重建。
+4. 64×32×2 天空漫射照明缓存，16 KiB RGBA8：按当地高度、太阳天顶角，保存向上法线及方位平均水平法线的 `E/π`。32 个极角、8 个太阳平面对称方位，每方向 24 步，实际积分天空一次及高阶散射；不把 MultipleScattering LUT 当作天空 irradiance。仅介质变化时重建，移动相机、太阳或云层不重建。以单位太阳照度归一化，编码为 `encodeL(16*E/π)`，采样严格除以 16；这个系数只改善存储精度，不改变光照或曝光。
+5. 合成：太空视角及地表空气透视仍使用 24 步，但按最低射线高度分配样本；从太空看地面时，不再把样本集中在稀薄的相机附近。日月、大气、星空与地表先合成 scene-linear HDR，支持时输出 RGBA16F，兼容路径输出编码 RGBA8。云通过 `CloudLighting.backgroundStage` 和 `backgroundIsHdr` 读取此附件，在云遮挡之后执行同一显示映射。大气独立使用时由自己的显示阶段输出；云旁路该显示图像，最终像素不会二次曝光。
 
-LUT 使用固定尺寸 GPU ComputeCommand 和 RGBA8 纹理；辐亮度用平方根压缩编码，无需浮点颜色附件扩展。与 Cesium 内部渲染 API 的接口集中于 `src/scene/GpuLut.ts`，固定到 Cesium 1.146.0。
+四张 LUT 仍使用固定尺寸 GPU ComputeCommand 和 RGBA8 纹理，共 165 KiB；无需浮点颜色附件扩展。RGBA16F 全尺寸辐亮度附件在 984×652 时为 4.895 MiB，RGBA8 回退为 2.447 MiB，不计驱动、深度及其它 framebuffer。`new AtmosphereEffect({hdr:false})` 可验证回退。LUT 资源接口集中于 `src/scene/GpuLut.ts`，固定到 Cesium 1.146.0。
 
-天空、太阳、月亮先在线性辐亮度中相加，最终使用 `scene/display.glsl` 的 ACES 拟合曲线与 Gamma 编码。两种云使用相同显示变换，避免薄云与天空之间出现曝光曲线不一致。地表输入已由 Cesium 显示映射，使用逆曲线恢复有效线性值后计算空气透视，无法恢复此前被截断的 HDR 信息。
+天空、太阳、月亮先在线性辐亮度中相加，最终使用 `scene/display.glsl` 的 ACES 拟合曲线与 Gamma 编码。两种云使用同一显示变换。Cesium 地表和星空输入已是 LDR，只能用逆曲线赋予有效线性值：这不是 Cesium 原始材质辐亮度，不能恢复已截断的地表高光，也不能保证其色调映射与这里的 ACES 拟合完全一致。自定义日月不经过这条恢复路径。外部 `CloudLighting` 未提供 HDR 附件或天空照明缓存时保留原兼容近似；本应用正常连接时不依赖 `recoverRadiance` 重建太阳。
 
 地表深度通过 `atmosphereRayDistance` 转到椭球缩放后的射线距离，与云共用转换。此前漏乘射线方向的缩放长度，在轨道高度提前截断空气积分，造成海面网格状明暗；此问题已修复。
 
-世界坐标以公里为积分单位；WGS84 极轴缩放到等效球体，使地面/极区不会与球形大气错开。椭球光程因此是近似。这里没有 UE 的视锥 3D aerial-perspective LUT、真实体积阴影或 HDR 曝光管线；不宣称与 UE 完全等价。
+世界坐标以公里为积分单位；WGS84 极轴缩放到等效球体，使地面/极区不会与球形大气错开。椭球光程因此是近似。这里没有 UE 的视锥 3D aerial-perspective LUT、真实体积阴影或自动曝光；自定义效果虽保留 HDR，Cesium 地表仍是上述 LDR 近似，不宣称与 UE 完全等价。
 
 ## 场景与控制
 
@@ -27,7 +28,7 @@ LUT 使用固定尺寸 GPU ComputeCommand 和 RGBA8 纹理；辐亮度用平方�
 
 默认打开“全球天空”，可切换回原龙卷风。大气拥有独立开关、Rayleigh / Mie / 臭氧浓度、曝光、太阳高度与方位，并提供晴昼、日落、夜晚、地面、轨道和全球视角。太阳角度以俄克拉荷马实验位置的 ENU 为参考，转换为统一 ECEF 光照方向，整个地球共享同一个太阳。
 
-Cesium `SkyAtmosphere.show`、`globe.showGroundAtmosphere` 和 `fog.enabled` 均关闭，默认太阳圆盘也关闭。地表使用同一太阳的 DirectionalLight，避免近地视角的 Cesium 默认“全天照亮”淡出。effect 销毁时释放三张 LUT、着色器、计算 primitive 和合成阶段，并恢复挂载前的场景状态。
+Cesium `SkyAtmosphere.show`、`globe.showGroundAtmosphere` 和 `fog.enabled` 均关闭，默认太阳圆盘也关闭。地表使用同一太阳的 DirectionalLight，避免近地视角的 Cesium 默认“全天照亮”淡出。effect 销毁时释放四张 LUT、着色器、计算 primitive 和合成阶段，并恢复挂载前的场景状态。
 
 ## 2026-10-22 日月状态修正
 
@@ -38,5 +39,7 @@ Cesium `SkyAtmosphere.show`、`globe.showGroundAtmosphere` 和 `fog.enabled` 均
 云现在能保留薄云后的太阳辐亮度；RGBA8 天空编码使用固定亚字节抖动，避免新增编码目标把连续光晕量化成同心色带，仍有逐像素量化误差。月面纹理依旧是程序化细节，不包括真实地貌、秤动、月食和物理光晕。日月相互遮盖只是当前绘制顺序，不作为日食精确模拟。完整状态、GLSL、资源验证与固定截图见 [本轮验证报告](satellite-validation.md)。
 
 ## 验证
+
+本轮全球透射、当地天空缓存、HDR 合成、80/99/101 km 过渡、体素尺度和日月门限的根因、数值误差、固定截图与实际 GPU 成本见 [全球光照验证报告](lighting-validation.md)。
 
 `npm test` 覆盖球体求交、地球遮挡、真空透射率、消光非负、光谱顺序、低空/高空透射和积分收敛。浏览器实际检查 GLSL 编译、晴昼/日落/夜晚、全球视角与独立开关；性能可用 `/?benchmark` 中的 CPU/GPU 采样工具观察。

@@ -1,5 +1,5 @@
 uniform sampler2D colorTexture,depthTexture,u_clouds,u_skyRadiance;
-uniform bool u_hasSkyRadiance;
+uniform bool u_hasSkyRadiance,u_skyRadianceHdr;
 in vec2 v_textureCoordinates;
 float distanceAt(vec2 uv){float depth=texture(depthTexture,uv).r;if(depth<=0.||depth>=1.)return 1e10;vec4 p=czm_windowToEyeCoordinates(uv*czm_viewport.zw+czm_viewport.xy,depth);return length(p.xyz/p.w);}
 void main(){
@@ -22,6 +22,10 @@ void main(){
     }
     if(sum>.0001)clouds/=sum;else{clouds=texture(u_clouds,v_textureCoordinates);clouds.rgb=loadCloudRadiance(clouds.rgb);}
     vec3 background=texture(colorTexture,v_textureCoordinates).rgb;
-    vec3 linearBackground=u_hasSkyRadiance?decodeL(texture(u_skyRadiance,v_textureCoordinates).rgb):cloudBackground(background);
+    vec3 linearBackground;
+    if(u_hasSkyRadiance){
+        vec3 stored=texture(u_skyRadiance,v_textureCoordinates).rgb;
+        linearBackground=u_skyRadianceHdr?stored:decodeL(stored);
+    }else linearBackground=cloudBackground(background);
     out_FragColor=vec4(cloudDisplay(clouds.rgb+linearBackground*(1.-clouds.a)),1);
 }

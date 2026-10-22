@@ -8,7 +8,9 @@ vec4 voxelShape(vec3 p,float footprint){
     vec3 q=voxelPosition(p);
     vec4 a=voxelAt(q+u_seed*.23,7.83,footprint),b=voxelAt(voxelRotate(q)+u_seed*.31,13.57,footprint);
     // The union's support is bounded by the minimum of both empty distances.
-    return a.r>b.r*.8?a:vec4(b.r*.8,b.g,b.b,b.a);
+    // Canonicalize internal depth to domain A units before selecting the union.
+    // A value from B spans 13.57 km, not 7.83 km. Do not rescale its density.
+    return a.r>b.r*.8?a:vec4(b.r*.8,b.g,b.b*(13.57/7.83),b.a);
 }
 float voxelEmptyDistance(vec3 p,float footprint){
     if(!u_voxelReady||!u_skipVoxels||cloudLayer!=0||farCloudWeight(footprint)>0.)return 0.;

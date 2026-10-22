@@ -11,13 +11,12 @@ float sceneDepth(vec2 uv){
     if(lo<=0.||hi>=1.||hi-lo>.002)return texture(depthTexture,uv).r;
     return mix(mix(z.x,z.y,f.x),mix(z.z,z.w,f.x),f.y);
 }
-void integrateCloud(vec3 d,vec2 segment,CloudPhases phases,inout vec4 acc,inout float weightedDistance){
+void integrateCloud(vec3 d,vec2 segment,inout vec4 acc,inout float weightedDistance){
     if(segment.y<=segment.x)return;
+    CloudPhases phases=scatteringPhases(d);
     float jitter=fract(52.9829189*fract(dot(gl_FragCoord.xy,vec2(.06711056,.00583715))));
     float span=segment.y-segment.x;
     #ifdef LAYERED_CLOUDS
-    vec3 representative=u_camera+d*(segment.x+segment.y)*.5;
-    cloudEnvironment(representative,phases.sky,phases.horizon);
     cloudRay=d;
     if(cloudLayer==1){
         // Ice is dominated by forward scattering, unlike the liquid dual lobe.
@@ -110,20 +109,20 @@ void main(){
     if(depth>0.&&depth<1.){vec4 hit=czm_windowToEyeCoordinates(v_textureCoordinates*czm_viewport.zw+czm_viewport.xy,depth);maximum=atmosphereRayDistance(wc,length(hit.xyz/hit.w));}
     vec2 ground=sphere(u_camera,d,Rg);
     if(ground.x>0.)maximum=min(maximum,ground.x);
-    vec4 acc=vec4(0);float weightedDistance=0.;CloudPhases phases=scatteringPhases(d);
+    vec4 acc=vec4(0);float weightedDistance=0.;
     #ifdef LAYERED_CLOUDS
     vec2 intervals[4];int layers[4];
     cloudIntervals(u_camera,d,maximum,intervals,layers);
     for(int i=0;i<4;i++){
-        cloudLayer=layers[i];integrateCloud(d,intervals[i],phases,acc,weightedDistance);
+        cloudLayer=layers[i];integrateCloud(d,intervals[i],acc,weightedDistance);
         if(acc.a>.995)break;
     }
     #else
     vec2 outer=sphere(u_camera,d,Rg+u_base+u_thickness);outer=vec2(max(0.,outer.x),min(maximum,outer.y));
     if(outer.y>outer.x){
         vec2 inner=sphere(u_camera,d,Rg+u_base);
-        if(inner.y<=outer.x||inner.x>=outer.y)integrateCloud(d,outer,phases,acc,weightedDistance);
-        else{integrateCloud(d,vec2(outer.x,min(outer.y,inner.x)),phases,acc,weightedDistance);if(acc.a<.995)integrateCloud(d,vec2(max(outer.x,inner.y),outer.y),phases,acc,weightedDistance);}
+        if(inner.y<=outer.x||inner.x>=outer.y)integrateCloud(d,outer,acc,weightedDistance);
+        else{integrateCloud(d,vec2(outer.x,min(outer.y,inner.x)),acc,weightedDistance);if(acc.a<.995)integrateCloud(d,vec2(max(outer.x,inner.y),outer.y),acc,weightedDistance);}
     }
     #endif
     if(u_atmosphere&&acc.a>.0001){

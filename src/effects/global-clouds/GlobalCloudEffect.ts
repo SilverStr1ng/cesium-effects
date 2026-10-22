@@ -19,6 +19,7 @@ import storage from './shaders/storage.glsl?raw';
 import display from '../../scene/display.glsl?raw';
 import atmosphereCommon from '../hillaire-atmosphere/shaders/common.glsl?raw';
 import atmosphereTransport from '../hillaire-atmosphere/shaders/integrate.glsl?raw';
+import skyIrradiance from '../hillaire-atmosphere/shaders/sky-irradiance-sample.glsl?raw';
 
 export interface CloudLighting {
   sunDirection:()=>Cartesian3;
@@ -27,10 +28,14 @@ export interface CloudLighting {
   transmittance:()=>GpuTexture|undefined;
   atmosphereEnabled:()=>boolean;
   multipleScattering?:()=>GpuTexture|undefined;
+  /** Unit-sun diffuse E/PI, 64x32x2, owned/invalidated by the atmosphere. */
+  skyIrradiance?:()=>GpuTexture|undefined;
   medium?:()=>Cartesian3;
   exposure?:()=>number;
-  /** Optional encoded scene-linear sky, before display clipping of the sun. */
+  /** Optional scene-linear sky, before display clipping of the sun. */
   backgroundStage?:string;
+  /** Omitted means the legacy RGBA8 radiance encoding. */
+  backgroundIsHdr?:()=>boolean;
 }
 /** A cloud model supplies medium and lighting; shell/depth transport stays shared. */
 export interface CloudModel {
@@ -143,20 +148,22 @@ export class GlobalCloudEffect implements SceneEffect {
       pixelDatatype:hdr?PixelDatatype.HALF_FLOAT:PixelDatatype.UNSIGNED_BYTE,
       fragmentShader:`#define CLOUD_STEPS ${quality.steps}\n#define LIGHT_STEPS ${quality.lightSteps}\n#define CLOUD_SUBSTEPS ${quality.substeps}\n`+(this.model.defines??'')+outputSource+atmosphereTransport+this.model.density+
         `uniform sampler2D depthTexture;uniform bool u_atmosphere;uniform vec3 u_camera,u_moon;
-        uniform float u_pixelAngle,u_moonFraction,u_moonGain;struct CloudPhases {vec3 sun;vec3 moon;vec3 sky;vec3 horizon;};`+
-        this.model.lighting+'\n#ifdef LAYERED_CLOUDS\n'+intervals+'\n#endif\n'+march,
+        uniform float u_pixelAngle,u_moonFraction,u_moonGain;struct CloudPhases {vec3 sun;vec3 moon;};`+
+        skyIrradiance+this.model.lighting+'\n#ifdef LAYERED_CLOUDS\n'+intervals+'\n#endif\n'+march,
       sampleMode:PostProcessStageSampleMode.LINEAR,
       uniforms:{...this.uniforms(),u_camera:()=>this.camera,u_pixelAngle:()=>this.pixelAngle,
         u_voxels:()=>this.voxels??this.noise!,u_voxelReady:()=>Boolean(this.voxels&&this.voxelEnabled),u_skipVoxels:()=>this.skipVoxels,
         u_cloudOptics:()=>this.optics??this.noise!,u_opticsReady:()=>Boolean(this.optics&&this.voxelEnabled),
         u_cirrus:()=>this.cirrus??this.noise!,
         u_multiple:()=>this.light?.multipleScattering?.()??this.weather!,u_medium:()=>this.light?.medium?.()??this.defaultMedium,
+        u_skyIrradiance:()=>this.light?.skyIrradiance?.()??this.weather!,u_hasSkyIrradiance:()=>Boolean(this.light?.skyIrradiance?.()),
         u_exposure:()=>this.light?.exposure?.()??8,
         u_moon:()=>this.light?.moonDirection()??Cartesian3.UNIT_Z,u_moonFraction:()=>this.light?.moonFraction()??0,u_moonGain:()=>this.moonLight,
         u_transmittance:()=>this.light?.transmittance()??this.weather!,u_atmosphere:()=>Boolean(this.light?.atmosphereEnabled()&&this.light.transmittance()&&this.light.multipleScattering?.())}});
     const output=new PostProcessStage({name:`${this.id}-resolve`,fragmentShader:outputSource+resolve,uniforms:{
       u_clouds:volume.name,u_exposure:()=>this.light?.exposure?.()??8,
       u_skyRadiance:this.light?.backgroundStage&&this.light.atmosphereEnabled()?this.light.backgroundStage:volume.name,
+      u_skyRadianceHdr:()=>this.light?.backgroundIsHdr?.()??false,
       u_hasSkyRadiance:()=>Boolean(this.light?.backgroundStage&&this.light.atmosphereEnabled())}});
     this.resolveStage=output;this.volumeStageName=volume.name;
     this.stage=new PostProcessStageComposite({name:this.id,stages:[volume,output],inputPreviousStageTexture:false});

@@ -26,14 +26,15 @@ try{
   frustum.fov=2*Math.atan(Math.tan(fovy*.5)*frustum.aspectRatio);
   viewer.scene.screenSpaceCameraController.enableInputs=false;
   await setMap('natural');
-  const atmosphere=new AtmosphereEffect();atmosphere.mount({viewer,onStatus:console.info});
+  const atmosphere=new AtmosphereEffect({hdr:query.get('storage')!=='rgba8'});atmosphere.mount({viewer,onStatus:console.info});
   atmosphere.updateParameters({exposure:8});
   if(query.has('manualSun')){atmosphere.setClockLinked(false);atmosphere.updateParameters({elevation:Number(query.get('manualSun')),azimuth:245});}
   const model=query.get('model')??'cellular';
   const clouds=new (model==='water'?WaterCloudEffect:GlobalCloudEffect)({sunDirection:()=>atmosphere.sunDirection,moonDirection:()=>atmosphere.moonDirection,
     moonFraction:()=>atmosphere.moonFraction,transmittance:()=>atmosphere.transmissionTexture,atmosphereEnabled:()=>atmosphere.enabled,
     multipleScattering:()=>atmosphere.multipleScatteringTexture,medium:()=>atmosphere.mediumParameters,exposure:()=>atmosphere.parameters.exposure,
-    backgroundStage:atmosphere.radianceStageName});
+    skyIrradiance:()=>atmosphere.skyIrradianceTexture,
+    backgroundStage:atmosphere.radianceStageName,backgroundIsHdr:()=>atmosphere.renderTargetMode==='RGBA16F'});
   clouds.mount({viewer,onStatus:console.info});clouds.setPaused(true);
   clouds.setMotion({angle:0,highAngle:0,evolution:0});
   let removeProfiler=()=>{};
@@ -54,22 +55,22 @@ try{
   const quality=query.get('quality')??'medium';
   if(['low','medium','high'].includes(quality))clouds.setQuality(quality as CloudQuality);
   const view=query.get('view')??'above';
-  const height=view==='below'?800:view==='inside'?3020:view==='global'?17000000:view==='orbit'?1200000:view==='high'?12500:view==='between'?7000:8300;
-  const pitch=view==='below'?12:view==='inside'||view==='between'?0:view==='global'||view==='orbit'?-90:-18;
-  viewer.camera.setView({destination:Cartesian3.fromDegrees(-97.52,35.46,height),
-    orientation:{heading:CesiumMath.toRadians(view==='global'?0:245),pitch:CesiumMath.toRadians(pitch),roll:0}});
+  const height=Number(query.get('height')??(view==='below'?800:view==='inside'?3020:view==='global'?17000000:view==='orbit'?1200000:view==='high'?12500:view==='between'?7000:8300));
+  const pitch=Number(query.get('pitch')??(view==='below'?12:view==='inside'||view==='between'?0:view==='global'||view==='orbit'?-90:-18));
+  viewer.camera.setView({destination:Cartesian3.fromDegrees(Number(query.get('lon')??-97.52),Number(query.get('lat')??35.46),height),
+    orientation:{heading:CesiumMath.toRadians(Number(query.get('heading')??(view==='global'?0:245))),pitch:CesiumMath.toRadians(pitch),roll:0}});
   if(view==='moon')viewer.camera.setView(cloudComparisonView(viewer.clock.currentTime,true));
   if(view==='sun-disc'||view==='moon-disc'){
     const body=celestialPositions(viewer.clock.currentTime)[view==='sun-disc'?'sun':'moon'];
     const beneath=Cartographic.fromCartesian(body);
-    const destination=Cartesian3.fromRadians(beneath.longitude,beneath.latitude,800);
+    const destination=Cartesian3.fromRadians(beneath.longitude,beneath.latitude,Number(query.get('height')??800));
     const direction=Cartesian3.normalize(Cartesian3.subtract(body,destination,new Cartesian3()),new Cartesian3());
     const right=Cartesian3.normalize(Cartesian3.cross(Cartesian3.UNIT_Z,direction,new Cartesian3()),new Cartesian3());
     viewer.camera.setView({destination,orientation:{direction,up:Cartesian3.cross(direction,right,new Cartesian3())}});
   }
   const gl=(viewer.scene as unknown as {context:{_gl:WebGL2RenderingContext}}).context._gl;
   const debug=gl.getExtension('WEBGL_debug_renderer_info');
-  const state=()=>({utc:JulianDate.toIso8601(viewer.clock.currentTime),atmosphere:{...atmosphere.parameters,clockLinked:atmosphere.clockLinked,moonFraction:atmosphere.moonFraction},
+  const state=()=>({utc:JulianDate.toIso8601(viewer.clock.currentTime),atmosphere:{...atmosphere.parameters,storage:atmosphere.renderTargetMode??'RGBA8',clockLinked:atmosphere.clockLinked,moonFraction:atmosphere.moonFraction},
     clouds:{model,voxels:clouds.voxelReady&&query.get('voxels')!=='off',storage:clouds.renderTargetMode,moonLight:clouds.moonLight,quality:clouds.quality,parameters:{...clouds.parameters},motion:clouds.motion},
     camera:{position:Cartesian3.pack(viewer.camera.positionWC,[]),direction:Cartesian3.pack(viewer.camera.directionWC,[]),up:Cartesian3.pack(viewer.camera.upWC,[]),fovy:frustum.fovy},
     drawingBuffer:[gl.drawingBufferWidth,gl.drawingBufferHeight],renderer:debug?gl.getParameter(debug.UNMASKED_RENDERER_WEBGL):gl.getParameter(gl.RENDERER)});

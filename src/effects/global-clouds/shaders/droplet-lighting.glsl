@@ -8,9 +8,14 @@ vec3 waterPhases(float c){
     }
     return result;
 }
+uniform sampler2D u_skyIrradiance;
+uniform bool u_hasSkyIrradiance;
 void cloudEnvironment(vec3 p,out vec3 sky,out vec3 horizon){
     vec3 up=normalize(p);sky=vec3(.035,.05,.075);horizon=vec3(.055,.06,.07);
     if(u_atmosphere){
+        if(u_hasSkyIrradiance){sampleSkyIrradiance(u_skyIrradiance,p,u_sun,sky,horizon);return;}
+        // Compatibility for third-party CloudLighting without the diffuse LUT.
+        // This older two-direction approximation is local, but is not E/PI.
         vec3 transmission;
         vec3 tangent=u_sun-up*dot(up,u_sun);
         if(dot(tangent,tangent)<.001)tangent=cross(up,abs(up.z)>.9?vec3(1,0,0):vec3(0,0,1));
@@ -21,11 +26,7 @@ void cloudEnvironment(vec3 p,out vec3 sky,out vec3 horizon){
     }
 }
 CloudPhases scatteringPhases(vec3 d){
-    vec3 sky=vec3(0),horizon=vec3(0);
-    #ifndef LAYERED_CLOUDS
-    cloudEnvironment(normalize(u_camera)*(Rg+u_base+u_thickness*.35),sky,horizon);
-    #endif
-    return CloudPhases(waterPhases(dot(d,u_sun)),waterPhases(dot(d,u_moon)),sky,horizon);
+    return CloudPhases(waterPhases(dot(d,u_sun)),waterPhases(dot(d,u_moon)));
 }
 float waterLightDepth(vec3 p,vec3 light,float rho,float footprint){
     #ifdef LAYERED_CLOUDS
@@ -65,8 +66,7 @@ float waterScatter(vec3 phase,float tau){
     return dot(phase*vec3(1.,.5,.25),exp(-tau*vec3(1.,.5,.25)));
 }
 vec3 waterDirectional(vec3 p,vec3 light,vec3 phase,float rho,float footprint,float interior){
-    vec2 hit=sphere(p,light,Rg);
-    if(hit.x>0.&&hit.y>0.)return vec3(0);
+    if(planetOccludes(p,light))return vec3(0);
     vec3 transmission=u_atmosphere?sunTransmission(u_transmittance,p,light):vec3(1);
     float tau=waterLightDepth(p,light,rho,footprint);
     vec3 resolved=transmission*waterScatter(phase,tau);
@@ -110,16 +110,17 @@ vec3 illumination(vec3 p,float rho,float footprint,CloudPhases phases){
         powder=1.;baseShadow=mix(.8,1.,smoothstep(0.,.15,h));
     }
     #endif
-    if(sunHeight>-.08)light+=waterDirectional(p,u_sun,phases.sun,rho,footprint,interior)*vec3(1.6,1.55,1.47)*powder*baseShadow;
+    light+=waterDirectional(p,u_sun,phases.sun,rho,footprint,interior)*vec3(1.6,1.55,1.47)*powder*baseShadow;
     // Night adaptation is deliberately separate from the displayed moon disc.
     // Phase and Earth occlusion still apply. At noon this entire light march skips.
     float moonEnergy=pow(clamp(u_moonFraction,0.,1.),1.6)*u_moonGain*
         (1.-smoothstep(-.1,.04,sunHeight));
-    if(moonHeight>-.03&&moonEnergy>.0001)
+    if(moonEnergy>.0001)
         light+=waterDirectional(p,u_moon,phases.moon,rho,footprint,interior)*vec3(.12,.14,.18)*moonEnergy*powder*baseShadow;
     // Hemispheric fill already represents diffuse/multiple-scattered sky light.
     // Two extra overhead taps used to suppress it a second time inside the cloud.
-    vec3 sky=mix(mix(phases.sky,phases.horizon,.35),phases.sky,sqrt(h));
+    vec3 zenith,horizon;cloudEnvironment(p,zenith,horizon);
+    vec3 sky=mix(mix(zenith,horizon,.35),zenith,sqrt(h));
     light+=sky*.48*ambientVisibility;
     light+=vec3(.015,.017,.019)*max(0.,sunHeight)*(1.-h);
     // Weak diffuse night fill keeps unlit bases readable without painting them blue.

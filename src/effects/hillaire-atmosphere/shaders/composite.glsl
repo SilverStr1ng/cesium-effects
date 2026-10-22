@@ -22,13 +22,19 @@ void main(){
     // tens of kilometres of air and reveals the globe's tile tessellation.
     if(surface){vec4 hit=czm_windowToEyeCoordinates(v_textureCoordinates*czm_viewport.zw+czm_viewport.xy,depth);maximum=atmosphereRayDistance(dirWC,length(hit.xyz/hit.w));}
     vec3 L,T;
-    if(!surface&&length(u_camera)<Rt-1.){
+    float radius=length(u_camera);
+    if(!surface&&radius<Rt){
         vec3 local=transpose(u_basis)*direction;
-        float elevation=asin(clamp(local.z,-1.,1.));
-        vec2 uv=vec2(fract(atan(local.y,local.x)/(2.*PI)+1.),.5+.5*sign(elevation)*sqrt(abs(elevation)/(PI*.5)));
-        L=decodeL(texture(u_skyView,(uv*vec2(191,107)+.5)/vec2(192,108)).rgb);
-        T=sunTransmission(u_transmittance,u_camera,direction);
+        L=decodeL(texture(u_skyView,skyViewTextureUV(local,radius)).rgb);
+        // The finite LUT and direct quadrature have different errors. Fade to
+        // the space path before exiting, so its boundary is actually continuous.
+        float spaceBlend=smoothstep(Rt-5.,Rt,radius);
+        if(spaceBlend>0.){
+            vec3 rayL,rayT;integrateAtmosphere(u_camera,direction,maximum,24,rayL,rayT);
+            L=mix(L,rayL,spaceBlend);
+        }
     }else integrateAtmosphere(u_camera,direction,maximum,24,L,T);
+    if(!surface)T=sunTransmission(u_transmittance,u_camera,direction);
     vec3 sky=L;
     if(!surface){
         // Space is behind both discs. The Moon's dark hemisphere must occult
@@ -65,11 +71,15 @@ void main(){
             sky=mix(sky,L+moon,1.-smoothstep(u_moonRadius-moonEdge,u_moonRadius+moonEdge,moonAngle));
         }
     }else sky+=recoverRadiance(background.rgb,u_exposure)*T;
-    // Preserve solar HDR for downstream clouds. RGBA8 encoding works without
-    // float colour attachments; the following stage supplies the display image.
+    // This is scene-linear radiance, before clouds or any display clipping.
+    // A float attachment preserves highlights directly; RGBA8 remains portable.
+    #ifdef SKY_HDR
+    out_FragColor=vec4(sky,1);
+    #else
     // A stable, zero-mean sub-byte dither prevents the additional encode target
     // from quantizing the continuous halo into rings. It changes neither the
     // exposure nor the mean encoded signal and does not require temporal history.
     float dither=fract(52.9829189*fract(dot(gl_FragCoord.xy,vec2(.06711056,.00583715))))-.5;
     out_FragColor=vec4(encodeL(sky)+dither/255.,1);
+    #endif
 }

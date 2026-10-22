@@ -11,6 +11,7 @@ import common from '../src/effects/hillaire-atmosphere/shaders/common.glsl?raw';
 import intervals from '../src/effects/global-clouds/shaders/intervals.glsl?raw';
 import lighting from '../src/effects/global-clouds/shaders/droplet-lighting.glsl?raw';
 import transport from '../src/effects/hillaire-atmosphere/shaders/integrate.glsl?raw';
+import irradianceSample from '../src/effects/hillaire-atmosphere/shaders/sky-irradiance-sample.glsl?raw';
 
 const output=document.querySelector('#result')!;
 const density=densitySource+voxelSource;
@@ -51,7 +52,7 @@ try{
     gl.uniform1i(gl.getUniformLocation(program,'u_voxels'),2);gl.uniform1i(gl.getUniformLocation(program,'u_voxelReady'),1);gl.uniform1i(gl.getUniformLocation(program,'u_skipVoxels'),1);
     gl.uniform1i(gl.getUniformLocation(program,'u_cirrus'),3);gl.uniform1i(gl.getUniformLocation(program,'u_cloudOptics'),4);gl.uniform1i(gl.getUniformLocation(program,'u_opticsReady'),1);
     gl.uniform1i(gl.getUniformLocation(program,'u_weather'),1);gl.uniform1f(gl.getUniformLocation(program,'u_exposure'),1.25);gl.uniform1f(gl.getUniformLocation(program,'u_seed'),13);
-    for(const name of ['u_transmittance','u_multiple'])gl.uniform1i(gl.getUniformLocation(program,name),1);
+    for(const name of ['u_transmittance','u_multiple','u_skyIrradiance'])gl.uniform1i(gl.getUniformLocation(program,name),1);
     for(const [name,value] of Object.entries({u_base:1.5,u_thickness:3.8,u_coverage:.85,u_density:1.1,u_detail:.55,u_windAngle:0,u_windSpeed:24,u_evolution:0,u_cloudType:0,u_highBase:9,u_highThickness:1.5,u_highCoverage:.35,u_highAngle:0,u_moonFraction:1,u_moonGain:1,...parameters}))gl.uniform1f(gl.getUniformLocation(program,name),value);
     for(const [name,v] of Object.entries(vectors))gl.uniform3f(gl.getUniformLocation(program,name),v[0],v[1],v[2]);
     gl.viewport(0,0,512,1);gl.drawArrays(gl.TRIANGLES,0,3);
@@ -129,7 +130,7 @@ try{
   let iceCount=0,iceMax=0,iceMotion=0;for(let i=0;i<512;i++){if(ice[i*4]>2)iceCount++;iceMax=Math.max(iceMax,ice[i*4]/255);iceMotion+=((ice[i*4]-movedIce[i*4])/255)**2;}
   const lightSource='#define LAYERED_CLOUDS\n#define LIGHT_STEPS 5\n'+common+transport+density+`
     uniform bool u_atmosphere;uniform vec3 u_camera,u_moon;uniform float u_moonFraction,u_moonGain;
-    struct CloudPhases {vec3 sun;vec3 moon;vec3 sky;vec3 horizon;};`+lighting;
+    struct CloudPhases {vec3 sun;vec3 moon;};`+irradianceSample+lighting;
   const moonFixture=`void main(){cloudLayer=int(mod(floor(gl_FragCoord.x),2.));vec3 p=vec3(0,0,Rg+layerBase()+layerThickness()*.5);
     CloudPhases phases=scatteringPhases(vec3(.6,0,.8));out_FragColor=vec4(illumination(p,cloudLayer==0?3.:.12,.02,phases)*8.,1);}`;
   const vectors={u_camera:[0,0,6378.937],u_sun:[0,0,-1],u_moon:[0,0,1]};
@@ -170,7 +171,7 @@ try{
     float a=abs(cloudDensity(p,.5001,false)-lowCloudDensity(p,.5001,false));
     float b=abs(cloudDensity(p,3.9999,false)-farCloudDensity(p,3.9999));out_FragColor=vec4(max(a,b),0,0,1);}`);
   const nightSide=run(lightSource,`void main(){vec3 p=vec3(0,0,-Rg-3.);CloudPhases phases=scatteringPhases(vec3(0,0,-1));
-    cloudEnvironment(p,phases.sky,phases.horizon);out_FragColor=vec4(illumination(p,.2,32.,phases),1);}`,
+    out_FragColor=vec4(illumination(p,.2,32.,phases),1);}`,
     {u_moonFraction:0},{u_camera:[0,0,23000],u_sun:[0,0,1],u_moon:[0,0,1]});
   const checks=[{name:'900 km displacement must not repeat the regional cloud field',pass:rms>.06,rms,threshold:.06},
     {name:'12 km displacement must not repeat local cloud lobes',pass:localRms>.035,rms:localRms},

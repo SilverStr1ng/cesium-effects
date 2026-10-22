@@ -1,4 +1,4 @@
-import { Cartesian3, DirectionalLight, JulianDate, Math as CesiumMath, Matrix3, Matrix4, PostProcessStage, PostProcessStageComposite, type Light } from 'cesium';
+import { Cartesian3, DirectionalLight, JulianDate, Math as CesiumMath, Matrix3, Matrix4, PixelDatatype, PostProcessStage, PostProcessStageComposite, type Light } from 'cesium';
 import type { EffectContext, SceneEffect } from '../types';
 import { GpuLut, type ComputeFrame } from '../../scene/GpuLut';
 import { atmosphereDefaults, POLAR_SCALE, type AtmosphereParameters } from './atmosphereMath';
@@ -7,6 +7,8 @@ import transmission from './shaders/transmittance.glsl?raw';
 import multiple from './shaders/multiple-scattering.glsl?raw';
 import integrate from './shaders/integrate.glsl?raw';
 import sky from './shaders/sky-view.glsl?raw';
+import skyParameters from './shaders/sky-view-parameters.glsl?raw';
+import irradiance from './shaders/sky-irradiance.glsl?raw';
 import composite from './shaders/composite.glsl?raw';
 import display from '../../scene/display.glsl?raw';
 import {celestialPositions,observerCelestials} from './CelestialLighting';
@@ -14,6 +16,8 @@ import {celestialPositions,observerCelestials} from './CelestialLighting';
 export class AtmosphereEffect implements SceneEffect {
   readonly id='hillaire-atmosphere';
   readonly radianceStageName='hillaire-atmosphere-radiance';
+  renderTargetMode:'RGBA16F'|'RGBA8'='RGBA8';
+  constructor(private options:{hdr?:boolean}={}){}
   readonly parameters={...atmosphereDefaults};
   readonly sunDirection=new Cartesian3();
   readonly moonDirection=new Cartesian3();
@@ -33,6 +37,7 @@ export class AtmosphereEffect implements SceneEffect {
   private transmittance?: GpuLut;
   private multiple?: GpuLut;
   private sky?: GpuLut;
+  private irradiance?: GpuLut;
   private stage?: PostProcessStageComposite;
   private dirty=true;
   private skyDirty=true;
@@ -45,6 +50,7 @@ export class AtmosphereEffect implements SceneEffect {
   private primitive={update:(frame:ComputeFrame)=>this.update(frame),isDestroyed:()=>false,destroy:()=>{}};
   get transmissionTexture(){return this.transmittance?.texture;}
   get multipleScatteringTexture(){return this.multiple?.texture;}
+  get skyIrradianceTexture(){return this.irradiance?.texture;}
   get mediumParameters(){return this.medium;}
   mount(context:EffectContext){
     this.context=context;
@@ -60,16 +66,22 @@ export class AtmosphereEffect implements SceneEffect {
     this.transmittance=new GpuLut(s,256,64,common+transmission,uniforms);
     this.multiple=new GpuLut(s,32,32,common+multiple,{...uniforms,u_transmittance:()=>this.transmittance!.texture});
     const transport={...uniforms,u_transmittance:()=>this.transmittance!.texture,u_multiple:()=>this.multiple!.texture,u_sun:()=>this.sunDirection};
+    this.irradiance=new GpuLut(s,64,64,common+skyParameters+integrate+irradiance,transport);
     const view={...transport,u_camera:()=>this.camera,u_basis:()=>this.basis};
-    this.sky=new GpuLut(s,192,108,common+integrate+sky,view);
-    const radiance=new PostProcessStage({name:this.radianceStageName,fragmentShader:common+display+integrate+composite,
+    this.sky=new GpuLut(s,192,108,common+skyParameters+integrate+sky,view);
+    const {context:gpu}=s as unknown as {context:{colorBufferHalfFloat:boolean;halfFloatingPointTexture:boolean;textureHalfFloatLinear:boolean}};
+    const hdr=this.options.hdr!==false&&gpu.colorBufferHalfFloat&&gpu.halfFloatingPointTexture&&gpu.textureHalfFloatLinear;
+    this.renderTargetMode=hdr?'RGBA16F':'RGBA8';
+    const radiance=new PostProcessStage({name:this.radianceStageName,pixelDatatype:hdr?PixelDatatype.HALF_FLOAT:PixelDatatype.UNSIGNED_BYTE,
+      fragmentShader:(hdr?'#define SKY_HDR\n':'')+common+skyParameters+display+integrate+composite,
       uniforms:{...view,u_skyView:()=>this.sky!.texture,u_exposure:()=>this.parameters.exposure,
         u_sunRadius:()=>this.sunRadius*this.parameters.sunScale,u_sunDisc:()=>this.sunDiscDirection,u_moonDisc:()=>this.moonDiscDirection,
         u_moonSun:()=>this.moonSunDirection,
         u_moonRadius:()=>this.moonRadius*this.parameters.moonScale,u_moonBrightness:()=>this.parameters.moonBrightness}});
     const output=new PostProcessStage({name:'hillaire-atmosphere-display',fragmentShader:common+display+`
       uniform sampler2D colorTexture;uniform float u_exposure;in vec2 v_textureCoordinates;
-      void main(){out_FragColor=vec4(displayRadiance(decodeL(texture(colorTexture,v_textureCoordinates).rgb),u_exposure),1);}`,
+      void main(){vec3 L=texture(colorTexture,v_textureCoordinates).rgb;
+        out_FragColor=vec4(displayRadiance(${hdr?'L':'decodeL(L)'},u_exposure),1);}`,
       uniforms:{u_exposure:()=>this.parameters.exposure}});
     this.stage=new PostProcessStageComposite({name:this.id,stages:[radiance,output]});
     this.stage.enabled=this.enabled;
@@ -115,9 +127,9 @@ export class AtmosphereEffect implements SceneEffect {
     const east=Cartesian3.normalize(Cartesian3.cross(Math.abs(up.z)>.99?Cartesian3.UNIT_Y:Cartesian3.UNIT_Z,up,new Cartesian3()),new Cartesian3());
     const north=Cartesian3.cross(up,east,new Cartesian3());
     Matrix3.setColumn(this.basis,0,east,this.basis);Matrix3.setColumn(this.basis,1,north,this.basis);Matrix3.setColumn(this.basis,2,up,this.basis);
-    if(this.dirty){this.transmittance!.enqueue(frame);this.multiple!.enqueue(frame);this.dirty=false;this.skyDirty=true;}
+    if(this.dirty){this.transmittance!.enqueue(frame);this.multiple!.enqueue(frame);this.irradiance!.enqueue(frame);this.dirty=false;this.skyDirty=true;}
     if(Cartesian3.distance(this.lastCamera,this.camera)>.001)this.skyDirty=true;
-    if(this.skyDirty&&Cartesian3.magnitude(this.camera)<6477.137){
+    if(this.skyDirty&&Cartesian3.magnitude(this.camera)<6478.137){
       this.sky!.enqueue(frame);this.skyDirty=false;Cartesian3.clone(this.camera,this.lastCamera);
     }
   }
@@ -169,7 +181,7 @@ export class AtmosphereEffect implements SceneEffect {
     this.removeClock?.();
     s.primitives.remove(this.primitive);
     if(this.stage)s.postProcessStages.remove(this.stage);
-    this.sky?.destroy();this.multiple?.destroy();this.transmittance?.destroy();
+    this.sky?.destroy();this.irradiance?.destroy();this.multiple?.destroy();this.transmittance?.destroy();
     if(this.previous){const p=this.previous;if(s.skyAtmosphere)s.skyAtmosphere.show=p.sky;s.globe.showGroundAtmosphere=p.ground;s.fog.enabled=p.fog;if(s.sun)s.sun.show=p.sun;if(s.moon)s.moon.show=p.moon;s.light=p.light;s.globe.enableLighting=p.lighting;s.globe.lightingFadeInDistance=p.fadeIn;s.globe.lightingFadeOutDistance=p.fadeOut;}
     this.context=undefined;
   }

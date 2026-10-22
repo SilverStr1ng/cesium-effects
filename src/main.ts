@@ -79,7 +79,8 @@ async function boot() {
   const clouds=new CloudComparison({sunDirection:()=>atmosphere.sunDirection,moonDirection:()=>atmosphere.moonDirection,
     moonFraction:()=>atmosphere.moonFraction,transmittance:()=>atmosphere.transmissionTexture,atmosphereEnabled:()=>atmosphere.enabled,
     multipleScattering:()=>atmosphere.multipleScatteringTexture,medium:()=>atmosphere.mediumParameters,exposure:()=>atmosphere.parameters.exposure,
-    backgroundStage:atmosphere.radianceStageName});
+    skyIrradiance:()=>atmosphere.skyIrradianceTexture,
+    backgroundStage:atmosphere.radianceStageName,backgroundIsHdr:()=>atmosphere.renderTargetMode==='RGBA16F'});
   clouds.mount({viewer,onStatus:notify});
   if (hasToken) element('token-note').innerHTML = `${icon('info',16)}<span>Cesium ion Token 已配置<small>可切换卫星影像底图</small></span>`;
   const initialEffect = effectRegistry[0].create();

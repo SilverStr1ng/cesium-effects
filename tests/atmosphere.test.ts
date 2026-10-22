@@ -26,3 +26,21 @@ test('transmission obeys vacuum, ground occlusion and spectral extinction',()=>{
   const fine=transmittance(.1,.2,atmosphereDefaults,512),coarse=transmittance(.1,.2,atmosphereDefaults,64);
   for(let c=0;c<3;c++)assert.ok(Math.abs(fine[c]-coarse[c])<.015);
 });
+
+test('space rays miss, enter, graze and cross atmosphere boundaries correctly',()=>{
+  const R=PLANET_RADIUS,top=R+100;
+  assert.deepEqual(transmittance(17000,-.5),[1,1,1]);
+  assert.deepEqual(transmittance(17000,-1),[0,0,0]);
+  assert.deepEqual(transmittance(0,-1),[0,0,0]);
+  assert.deepEqual(transmittance(100,1),[1,1,1]);
+  assert.deepEqual(transmittance(100,0),[1,1,1]);
+  for(const tangentHeight of [1,20,50,99.9,100.1]){
+    const radius=R+17000,impact=R+tangentHeight;
+    const mu=-Math.sqrt(1-(impact/radius)**2);
+    const outside=transmittance(17000,mu,undefined,4096);
+    if(impact>top){assert.deepEqual(outside,[1,1,1]);continue;}
+    const entryMu=-Math.sqrt(1-(impact/top)**2);
+    const atEntry=transmittance(100,entryMu,undefined,4096);
+    outside.forEach((v,c)=>assert.ok(Math.abs(v-atEntry[c])<1e-8));
+  }
+});

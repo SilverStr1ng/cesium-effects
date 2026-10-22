@@ -3,6 +3,7 @@ import {POLAR_SCALE} from '../src/effects/hillaire-atmosphere/atmosphereMath';
 import density from '../src/effects/water-clouds/shaders/density.glsl?raw';
 import lighting from '../src/effects/global-clouds/shaders/droplet-lighting.glsl?raw';
 import transport from '../src/effects/hillaire-atmosphere/shaders/integrate.glsl?raw';
+import irradianceSample from '../src/effects/hillaire-atmosphere/shaders/sky-irradiance-sample.glsl?raw';
 import {createCumulusNoise,CUMULUS_NOISE_SIZE as NOISE_SIZE} from '../src/effects/global-clouds/CumulusNoise';
 import {createWeather,WEATHER_WIDTH,WEATHER_HEIGHT} from '../src/effects/global-clouds/WeatherField';
 import common from '../src/effects/hillaire-atmosphere/shaders/common.glsl?raw';
@@ -31,7 +32,7 @@ try{
     if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(program)!);
     gl.useProgram(program);gl.uniform1i(gl.getUniformLocation(program,'u_noise'),0);
     gl.uniform1i(gl.getUniformLocation(program,'u_weather'),1);
-    for(const name of ['u_transmittance','u_multiple'])gl.uniform1i(gl.getUniformLocation(program,name),1);gl.uniform1f(gl.getUniformLocation(program,'u_exposure'),1.25);gl.uniform1f(gl.getUniformLocation(program,'u_seed'),13);
+    for(const name of ['u_transmittance','u_multiple','u_skyIrradiance'])gl.uniform1i(gl.getUniformLocation(program,name),1);gl.uniform1f(gl.getUniformLocation(program,'u_exposure'),1.25);gl.uniform1f(gl.getUniformLocation(program,'u_seed'),13);
     for(const [name,value] of Object.entries({u_base:1.5,u_thickness:3.8,u_coverage:.85,u_density:1.1,u_detail:.55,u_windAngle:0,u_windSpeed:24,u_evolution:0,u_moonFraction:1,u_moonGain:1,...parameters}))gl.uniform1f(gl.getUniformLocation(program,name),value);
     for(const [name,v] of Object.entries(vectors))gl.uniform3f(gl.getUniformLocation(program,name),v[0],v[1],v[2]);
     gl.viewport(0,0,512,1);gl.drawArrays(gl.TRIANGLES,0,3);
@@ -66,7 +67,7 @@ try{
 #define LIGHT_STEPS 7
     uniform bool u_atmosphere;uniform vec3 u_camera,u_moon;
     uniform float u_moonFraction,u_moonGain;
-    struct CloudPhases {vec3 sun;vec3 moon;vec3 sky;vec3 horizon;};`+lighting;
+    struct CloudPhases {vec3 sun;vec3 moon;};`+irradianceSample+lighting;
   const up=[anchor.x,anchor.y,anchor.z];const len=Math.hypot(...up);for(let i=0;i<3;i++)up[i]/=len;
   const vectors={u_sun:up.map(v=>-v),u_moon:up,u_camera:up.map(v=>v*6378.937)};
   const nightFixture=`void main(){float i=floor(gl_FragCoord.x);vec3 up=normalize(${anchorGLSL}),east=normalize(cross(vec3(0,0,1),up));
@@ -84,8 +85,8 @@ try{
   const analytic=common+transport+`
 #define LIGHT_STEPS 7
     uniform bool u_atmosphere;uniform vec3 u_camera,u_moon;uniform float u_base,u_thickness,u_density,u_moonFraction,u_moonGain;
-    struct CloudPhases {vec3 sun;vec3 moon;vec3 sky;vec3 horizon;};
-    float cloudDensity(vec3 p,float footprint,bool coarse){return u_density;}`+lighting;
+    struct CloudPhases {vec3 sun;vec3 moon;};
+    float cloudDensity(vec3 p,float footprint,bool coarse){return u_density;}`+irradianceSample+lighting;
   const shadowFixture=`void main(){vec3 p=vec3(0,0,Rg+2.);float e=waterScatter(waterPhases(.3),waterLightDepth(p,vec3(0,0,1),u_density,.01));out_FragColor=vec4(vec3(e*5.),1);}`;
   const thin=average(run(analytic,shadowFixture,{u_density:.05})),thick=average(run(analytic,shadowFixture,{u_density:2}));
   // A uniform medium has an exact optical depth. Changing quality must change
