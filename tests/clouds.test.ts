@@ -2,6 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {cloudSegments,weatherAt,createWeather,WEATHER_WIDTH,WEATHER_HEIGHT} from '../src/effects/global-clouds/WeatherField.ts';
 import {PLANET_RADIUS as R} from '../src/effects/hillaire-atmosphere/atmosphereMath.ts';
+import {volumeMipChain} from '../src/effects/global-clouds/CumulusNoise.ts';
 
 test('cloud shell clips against planet and scene depth at ground, inside and orbital scales',()=>{
   assert.deepEqual(cloudSegments([0,0,R+.8],[0,0,-1]),[]);
@@ -43,4 +44,13 @@ test('weather seeds change the same planetary locations deterministically',()=>{
     a.forEach((v,c)=>{assert.ok(v>=0&&v<=1);change+=(v-b[c])**2;});
   }
   assert.ok(Math.sqrt(change/(128*4))>.1,'a new seed must change cloud coverage and regional structure');
+});
+
+test('volume mip levels preserve a constant field and integrate alternating texels',()=>{
+  const constant=new Uint8Array(8**3*4).fill(73),levels=volumeMipChain(constant,8);
+  assert.deepEqual(levels.map(level=>level.length),[4**3*4,2**3*4,4]);
+  for(const level of levels)assert.ok(level.every(value=>value===73));
+  const alternating=Uint8Array.from({length:8**3*4},(_,i)=>Math.floor(i/4)%2?200:20);
+  for(const level of volumeMipChain(alternating,8))assert.ok(level.every(value=>value===110));
+  assert.throws(()=>volumeMipChain(new Uint8Array(3**3*4),3));
 });

@@ -8,16 +8,18 @@ export interface GpuTexture {
 }
 
 /** WebGL2 hardware trilinear, repeat-wrapped noise volume (four channels). */
-export function createRepeatingVolume(scene: Cesium.Scene, size: number, bytes: Uint8Array): GpuTexture {
+export function createRepeatingVolume(scene: Cesium.Scene, size: number, bytes: Uint8Array, mipLevels?:Uint8Array[]): GpuTexture {
   const api=Cesium as unknown as {
     Texture3D:new(options:object)=>GpuTexture;
     Sampler:new(options:object)=>unknown;
     TextureWrap:{REPEAT:number};
+    TextureMinificationFilter:{LINEAR:number;LINEAR_MIPMAP_LINEAR:number};
   };
   const {context}=scene as unknown as {context:unknown};
   return new api.Texture3D({context,flipY:false,
-    source:{width:size,height:size,depth:size,arrayBufferView:bytes},
-    sampler:new api.Sampler({wrapS:api.TextureWrap.REPEAT,wrapT:api.TextureWrap.REPEAT,wrapR:api.TextureWrap.REPEAT}),
+    source:{width:size,height:size,depth:size,arrayBufferView:bytes,mipLevels},
+    sampler:new api.Sampler({wrapS:api.TextureWrap.REPEAT,wrapT:api.TextureWrap.REPEAT,wrapR:api.TextureWrap.REPEAT,
+      minificationFilter:mipLevels?api.TextureMinificationFilter.LINEAR_MIPMAP_LINEAR:api.TextureMinificationFilter.LINEAR}),
   });
 }
 interface TextureConstructor {

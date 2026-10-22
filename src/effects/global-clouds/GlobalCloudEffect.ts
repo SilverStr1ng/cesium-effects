@@ -2,7 +2,7 @@ import {Cartesian3,Math as CesiumMath,Matrix4,PostProcessStage,PostProcessStageC
 import type {EffectContext,SceneEffect} from '../types';
 import {cloudDefaults,cloudQualities,type CloudParameters,type CloudQuality} from './config';
 import {createWeather,WEATHER_WIDTH,WEATHER_HEIGHT} from './WeatherField';
-import {createNoiseVolume,NOISE_SIZE} from '../../scene/CloudNoise';
+import {createCumulusNoise,CUMULUS_NOISE_SIZE} from './CumulusNoise';
 import {createRepeatingVolume,createWeatherTexture,type GpuTexture} from '../../scene/DynamicTexture';
 import {POLAR_SCALE} from '../hillaire-atmosphere/atmosphereMath';
 import density from './shaders/density.glsl?raw';
@@ -34,6 +34,7 @@ export class GlobalCloudEffect implements SceneEffect {
   private defaultSun=Cartesian3.normalize(new Cartesian3(-.6,-.6,.5),new Cartesian3());
   private defaultMedium=new Cartesian3(1,1,1);
   private windAngle=0;
+  private evolution=0;
   private lastTime=0;
   private pixelAngle=.001;
   private removeUpdate?:()=>void;
@@ -42,17 +43,22 @@ export class GlobalCloudEffect implements SceneEffect {
   private uniforms(){
     return {u_weather:()=>this.weather!,u_noise:()=>this.noise!,u_base:()=>this.parameters.base,
       u_thickness:()=>this.parameters.thickness,u_coverage:()=>this.parameters.coverage,u_density:()=>this.parameters.density,
-      u_detail:()=>this.parameters.detail,u_seed:()=>this.parameters.seed,u_windAngle:()=>this.windAngle,u_sun:()=>this.sun};
+      u_detail:()=>this.parameters.detail,u_seed:()=>this.parameters.seed,u_windAngle:()=>this.windAngle,
+      u_evolution:()=>this.evolution,u_windSpeed:()=>this.parameters.wind,u_sun:()=>this.sun};
   }
   mount(context:EffectContext){
     this.context=context;const scene=context.viewer.scene;
     this.weather=createWeatherTexture(scene,WEATHER_WIDTH,WEATHER_HEIGHT,createWeather(this.parameters.seed));
-    this.noise=createRepeatingVolume(scene,NOISE_SIZE,createNoiseVolume());
+    const noise=createCumulusNoise();
+    this.noise=createRepeatingVolume(scene,CUMULUS_NOISE_SIZE,noise.bytes,noise.mips);
     this.buildStage();
     this.removeUpdate=scene.preUpdate.addEventListener(()=>{
       const now=performance.now(),dt=this.lastTime?Math.min(.1,(now-this.lastTime)*.001):0;this.lastTime=now;
       if(!this.enabled)return;
-      if(!this.paused)this.windAngle+=dt*this.parameters.wind*.001/6378.137;
+      if(!this.paused){
+        this.windAngle+=dt*this.parameters.wind*.001/6378.137;
+        this.evolution+=dt*this.parameters.wind*.001*.35;
+      }
       const p=context.viewer.camera.positionWC;
       Cartesian3.fromElements(p.x*.001,p.y*.001,p.z*.001*POLAR_SCALE,this.camera);
       const frustum=context.viewer.camera.frustum as {fovy?:number};
@@ -64,7 +70,7 @@ export class GlobalCloudEffect implements SceneEffect {
     if(this.stage)stages.remove(this.stage);
     const quality=cloudQualities[this.quality];
     const volume=new PostProcessStage({name:'global-cloud-volume',textureScale:quality.scale,
-      fragmentShader:`#define CLOUD_STEPS ${quality.steps}\n#define LIGHT_STEPS ${quality.lightSteps}\n`+atmosphereCommon+atmosphereTransport+density+radiometry+march,
+      fragmentShader:`#define CLOUD_STEPS ${quality.steps}\n#define LIGHT_STEPS ${quality.lightSteps}\n#define CLOUD_SUBSTEPS ${quality.substeps}\n`+atmosphereCommon+atmosphereTransport+density+radiometry+march,
       sampleMode:PostProcessStageSampleMode.LINEAR,
       uniforms:{...this.uniforms(),u_camera:()=>this.camera,u_pixelAngle:()=>this.pixelAngle,
         u_multiple:()=>this.light?.multipleScattering?.()??this.weather!,u_medium:()=>this.light?.medium?.()??this.defaultMedium,
@@ -84,7 +90,7 @@ export class GlobalCloudEffect implements SceneEffect {
   setQuality(value:CloudQuality){if(this.quality===value)return;this.quality=value;this.buildStage();}
   setEnabled(value:boolean){this.enabled=value;if(this.stage)this.stage.enabled=value;}
   setPaused(value:boolean){this.paused=value;}
-  reset(){this.windAngle=0;this.updateParameters(cloudDefaults);}
+  reset(){this.windAngle=0;this.evolution=0;this.updateParameters(cloudDefaults);}
   focus(){this.view('below');}
   view(mode:'below'|'inside'|'above'|'global'){
     if(!this.context)return;const camera=this.context.viewer.camera;

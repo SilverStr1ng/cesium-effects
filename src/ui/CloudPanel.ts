@@ -7,10 +7,10 @@ export function mountCloudPanel(parent:HTMLElement,cloud:GlobalCloudEffect){
     <p class="environment-description">球壳天气 · 三维细节 · 可穿行云层</p>
     <div class="environment-views"><button data-cloud-view="below">云下</button><button data-cloud-view="inside">云中</button><button data-cloud-view="above">云上</button><button data-cloud-view="global">全球云系</button></div>
     <div id="cloud-controls"></div>
-    <label class="environment-label" for="cloud-quality">云渲染质量</label><select id="cloud-quality"><option value="low">流畅 · 40 步 / 50%</option><option value="medium" selected>均衡 · 64 步 / 65%</option><option value="high">精细 · 96 步 / 100%</option></select>
+    <label class="environment-label" for="cloud-quality">云渲染质量</label><select id="cloud-quality"><option value="low">流畅 · 节省性能</option><option value="medium" selected>均衡 · 推荐</option><option value="high">精细 · 更多细节</option></select>
     <label class="environment-label" for="cloud-seed">天气种子</label><input id="cloud-seed" type="number" min="0" max="9999" step="1" value="${cloud.parameters.seed}">
     <div class="environment-presets"><button id="cloud-pause">暂停风场</button><button id="cloud-reset">重置云层</button><button id="cloud-new-weather">更换天气</button></div>
-    <p class="environment-description">风速按真实秒推进；太阳与月亮跟随 Cesium 时间。</p>`;
+    <p class="environment-description">风速驱动平流、云顶倾斜和形态演化；日月跟随 Cesium 时间。</p>`;
   parent.append(panel);
   const specs:{key:keyof CloudParameters;label:string;min:number;max:number;step:number;unit:string}[]=[
     {key:'coverage',label:'云量',min:0,max:1,step:.01,unit:''},

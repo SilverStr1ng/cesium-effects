@@ -14,7 +14,7 @@ export function periodicNoise(x:number,y:number,z:number,period:number,seed=17) 
     sum+=hash(wrap(ix+i,period),wrap(iy+j,period),wrap(iz+k,period),seed)*(i?fx:1-fx)*(j?fy:1-fy)*(k?fz:1-fz);
   return sum;
 }
-function worley(x:number,y:number,z:number,period:number) {
+export function worley(x:number,y:number,z:number,period:number) {
   const ix=Math.floor(x),iy=Math.floor(y),iz=Math.floor(z);
   let distance=3;
   for(let k=-1;k<=1;k++)for(let j=-1;j<=1;j++)for(let i=-1;i<=1;i++){
