@@ -15,6 +15,17 @@ void integrateCloud(vec3 d,vec2 segment,CloudPhases phases,inout vec4 acc,inout 
     if(segment.y<=segment.x)return;
     float jitter=fract(52.9829189*fract(dot(gl_FragCoord.xy,vec2(.06711056,.00583715))));
     float span=segment.y-segment.x;
+    #ifdef LAYERED_CLOUDS
+    vec3 representative=u_camera+d*(segment.x+segment.y)*.5;
+    cloudEnvironment(representative,phases.sky,phases.horizon);
+    cloudRay=d;
+    if(cloudLayer==1){
+        // Ice is dominated by forward scattering, unlike the liquid dual lobe.
+        float cs=dot(d,u_sun),cm=dot(d,u_moon);
+        phases.sun=vec3(mix(1./(4.*PI),waterPhase(cs,.82),.85),waterPhase(cs,.35),1./(4.*PI));
+        phases.moon=vec3(mix(1./(4.*PI),waterPhase(cm,.82),.85),waterPhase(cm,.35),1./(4.*PI));
+    }
+    #endif
     float skipUntil=segment.x,skipFootprint=0.;
     int steps=CLOUD_STEPS;
     #ifdef LAYERED_CLOUDS
@@ -42,10 +53,9 @@ void integrateCloud(vec3 d,vec2 segment,CloudPhases phases,inout vec4 acc,inout 
         }
         #endif
         #ifdef LAYERED_CLOUDS
-        // High-cloud fibres can be smaller than the interval along a grazing
-        // ray, even when their screen footprint is tiny. Filter in both domains
-        // instead of turning undersampled strands into an opacity stipple.
-        if(cloudLayer==1)footprint=max(footprint,(t1-t0)*.5);
+        // Cirrus filters extinction with the ray derivative in its anisotropic
+        // domain. Passing a scalar interval footprint here erased long strands.
+        cloudStep=cloudLayer==1?t1-t0:0.;
         #endif
         // Integrate each interval completely: a zero midpoint is not proof that
         // its edges are empty, especially at a sharp cloud silhouette.
@@ -76,7 +86,11 @@ void integrateCloud(vec3 d,vec2 segment,CloudPhases phases,inout vec4 acc,inout 
                 if(cloudLayer==1)offset=.5;
                 #endif
                 float t=t0+(float(s)+.05+offset*.9)*ds;
-                vec3 p=u_camera+d*t;float rho=cloudDensity(p,footprint,false);
+                vec3 p=u_camera+d*t;
+                #ifdef LAYERED_CLOUDS
+                cloudSlant=1./max(.04,abs(dot(d,normalize(p))));
+                #endif
+                float rho=cloudDensity(p,footprint,false);
                 if(rho>.001){
                     float alpha=1.-exp(-rho*ds);
                     vec3 light=illumination(p,rho,footprint,phases);

@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {Cartesian3,JulianDate} from 'cesium';
-import {celestialPositions,angularRadius,illuminatedFraction} from '../src/effects/hillaire-atmosphere/CelestialLighting.ts';
+import {celestialPositions,angularRadius,illuminatedFraction,observerCelestials} from '../src/effects/hillaire-atmosphere/CelestialLighting.ts';
 test('solar/lunar ephemerides are finite and rotate with Cesium time',()=>{
   const t=JulianDate.fromIso8601('2026-10-22T00:00:00Z');
   const a=celestialPositions(t),b=celestialPositions(JulianDate.addHours(t,12,new JulianDate()));
@@ -15,6 +15,23 @@ test('lunar phase ranges from new Moon to full Moon',()=>{
   assert.equal(illuminatedFraction(new Cartesian3(1,0,0),new Cartesian3(1,0,0)),0);
   assert.equal(illuminatedFraction(new Cartesian3(1,0,0),new Cartesian3(-1,0,0)),1);
   assert.equal(illuminatedFraction(new Cartesian3(1,0,0),new Cartesian3(0,1,0)),.5);
+});
+test('manual solar geometry drives both the lunar terminator and reported fraction',()=>{
+  const bodies={sun:new Cartesian3(1.5e11,0,0),moon:new Cartesian3(3.84e8,0,0)};
+  for(const [sun,fraction] of [[new Cartesian3(1,0,0),0],[new Cartesian3(0,1,0),.5],[new Cartesian3(-1,0,0),1]] as const){
+    const state=observerCelestials(bodies,Cartesian3.ZERO,sun);
+    assert.equal(state.moonFraction,fraction);
+    assert.deepEqual(state.sunDirection,state.moonSunDirection);
+  }
+});
+test('observer movement changes lunar size, parallax and phase without changing UTC',()=>{
+  const bodies=celestialPositions(JulianDate.fromIso8601('2026-06-21T17:00:00Z'));
+  const a=observerCelestials(bodies,Cartesian3.fromDegrees(-97,35,800));
+  const b=observerCelestials(bodies,Cartesian3.fromDegrees(70,-35,17000000));
+  assert.ok(Cartesian3.distance(a.moonDirection,b.moonDirection)>.01);
+  assert.notEqual(a.moonRadius,b.moonRadius);assert.notEqual(a.moonFraction,b.moonFraction);
+  assert.ok(Math.abs(Cartesian3.magnitude(a.moonDirection)-1)<1e-12);
+  assert.ok(Math.abs(a.moonFraction-illuminatedFraction(bodies.sun,bodies.moon))<.02);
 });
 
 // The A/B lunar preset must actually put a bright moon above the local horizon.

@@ -8,10 +8,10 @@ vec3 waterPhases(float c){
     }
     return result;
 }
-CloudPhases scatteringPhases(vec3 d){
-    vec3 up=normalize(u_camera),sky=vec3(.035,.05,.075),horizon=vec3(.055,.06,.07);
+void cloudEnvironment(vec3 p,out vec3 sky,out vec3 horizon){
+    vec3 up=normalize(p);sky=vec3(.035,.05,.075);horizon=vec3(.055,.06,.07);
     if(u_atmosphere){
-        vec3 p=up*(Rg+u_base+u_thickness*.35),transmission;
+        vec3 transmission;
         vec3 tangent=u_sun-up*dot(up,u_sun);
         if(dot(tangent,tangent)<.001)tangent=cross(up,abs(up.z)>.9?vec3(1,0,0):vec3(0,0,1));
         integrateAtmosphere(p,up,150.,10,sky,transmission);
@@ -19,6 +19,12 @@ CloudPhases scatteringPhases(vec3 d){
     }else{
         float day=smoothstep(-.12,.15,dot(up,u_sun));sky*=day;horizon*=day;
     }
+}
+CloudPhases scatteringPhases(vec3 d){
+    vec3 sky=vec3(0),horizon=vec3(0);
+    #ifndef LAYERED_CLOUDS
+    cloudEnvironment(normalize(u_camera)*(Rg+u_base+u_thickness*.35),sky,horizon);
+    #endif
     return CloudPhases(waterPhases(dot(d,u_sun)),waterPhases(dot(d,u_moon)),sky,horizon);
 }
 float waterLightDepth(vec3 p,vec3 light,float rho,float footprint){
@@ -30,6 +36,7 @@ float waterLightDepth(vec3 p,vec3 light,float rho,float footprint){
         float mu=dot(normalize(p),light);
         return rho*min(8.,u_highThickness*(mu>0.?1.-h:h)/max(.08,abs(mu)))*.5;
     }
+    if(farCloudWeight(footprint)>=1.)return farCloudLightDepth(p,light,footprint);
     #endif
     vec3 axis=abs(light.z)>.99?vec3(0,1,0):vec3(0,0,1);
     vec3 tangent=normalize(cross(axis,light)),bitangent=cross(light,tangent);
@@ -48,6 +55,10 @@ float waterLightDepth(vec3 p,vec3 light,float rho,float footprint){
         float sampleDensity=cloudDensity(p+light*t+cone,max(footprint,t*.25),t>.1);
         tau+=sampleDensity*(t1-t0);
     }
+    #ifdef LAYERED_CLOUDS
+    float far=farCloudWeight(footprint);
+    if(far>0.)tau=mix(tau,farCloudLightDepth(p,light,footprint),far);
+    #endif
     return tau;
 }
 float waterScatter(vec3 phase,float tau){
@@ -58,18 +69,28 @@ vec3 waterDirectional(vec3 p,vec3 light,vec3 phase,float rho,float footprint,flo
     if(hit.x>0.&&hit.y>0.)return vec3(0);
     vec3 transmission=u_atmosphere?sunTransmission(u_transmittance,p,light):vec3(1);
     float tau=waterLightDepth(p,light,rho,footprint);
+    vec3 resolved=transmission*waterScatter(phase,tau);
     #ifdef LAYERED_CLOUDS
-    if(u_voxelReady&&cloudLayer==0){
-        // Nubis cubed's dimensional-profile idea: thin edges retain directional
-        // single scattering; thick interiors gradually gain isotropic orders.
-        // The higher orders have lower effective extinction, never negative tau.
+    if(u_voxelReady&&cloudLayer==0&&farCloudWeight(footprint)<1.){
         float probability=mix(.18,1.,interior);
         float forward=smoothstep(.35,.95,dot(normalize(p-u_camera),light));
         vec3 extinction=vec3(1.,mix(.55,.32,forward*interior),mix(.28,.12,forward*interior));
-        return transmission*dot(phase*vec3(1.,.5*probability,.25*probability),exp(-tau*extinction));
+        resolved=transmission*dot(phase*vec3(1.,.5*probability,.25*probability),exp(-tau*extinction));
+    }
+    float far=cloudLayer==0?farCloudWeight(footprint):0.;
+    if(far>0.){
+        // Unresolved opaque columns keep their conditional multiple scattering.
+        // Applying their mean shadow to a dilute effective medium darkens them
+        // twice. The table's bounded two-flux reflectance supplies a local,
+        // sun-dependent source; the original directional lobe handles thin light.
+        float reflectance=columnOptics(cloudWeather(p,footprint),1.).z;
+        float above=smoothstep(-.1,.1,dot(normalize(u_camera-p),normalize(p)));
+        float diffuse=mix(1.-reflectance,reflectance,above)*max(0.,dot(normalize(p),light))/PI;
+        vec3 statistical=transmission*(diffuse+waterScatter(phase,tau)*(1.-reflectance));
+        return mix(resolved,statistical,far);
     }
     #endif
-    return transmission*waterScatter(phase,tau);
+    return resolved;
 }
 vec3 illumination(vec3 p,float rho,float footprint,CloudPhases phases){
     vec3 up=normalize(p);float sunHeight=dot(up,u_sun),moonHeight=dot(up,u_moon);

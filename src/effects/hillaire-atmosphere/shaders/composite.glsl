@@ -5,7 +5,7 @@ uniform vec3 u_camera;
 uniform mat3 u_basis;
 uniform float u_exposure;
 uniform float u_sunRadius;
-uniform vec3 u_moon;
+uniform vec3 u_sunDisc,u_moonDisc,u_moonSun;
 uniform float u_moonRadius;
 uniform float u_moonBrightness;
 in vec2 v_textureCoordinates;
@@ -31,29 +31,45 @@ void main(){
     }else integrateAtmosphere(u_camera,direction,maximum,24,L,T);
     vec3 sky=L;
     if(!surface){
-        float angle=acos(clamp(dot(direction,u_sun),-1.,1.));
-        float disk=1.-smoothstep(u_sunRadius*.96,u_sunRadius*1.04,angle);
+        // Space is behind both discs. The Moon's dark hemisphere must occult
+        // stars and the solar halo, rather than being an additive transparent disc.
+        float night=1.-smoothstep(-.15,.05,dot(normalize(u_camera),u_sun));
+        sky+=recoverRadiance(background.rgb,u_exposure)*T*mix(.005,.75,night);
+        float angle=atan(length(cross(dirWC,u_sunDisc)),dot(dirWC,u_sunDisc));
+        float pixel=max(length(dFdx(dirWC)),length(dFdy(dirWC)));
+        float edge=max(pixel*.65,u_sunRadius*.015);
+        float disk=1.-smoothstep(u_sunRadius-edge,u_sunRadius+edge,angle);
         float halo=exp(-angle/max(.001,u_sunRadius)*.75)*.32;
         sky+=(disk*8.+halo*.12)*sunTransmission(u_transmittance,u_camera,u_sun)*vec3(1.,.94,.83);
         // A lit sphere projected onto the Moon's apparent disc gives the lunar phase.
-        float moonCos=dot(direction,u_moon);
-        if(moonCos>cos(u_moonRadius*1.05)){
-            vec3 right=normalize(cross(abs(u_moon.z)>.99?vec3(0,1,0):vec3(0,0,1),u_moon));
-            vec3 up=cross(u_moon,right);
-            vec2 uv=vec2(dot(direction,right),dot(direction,up))/sin(u_moonRadius);
+        float moonAngle=atan(length(cross(dirWC,u_moonDisc)),dot(dirWC,u_moonDisc));
+        float moonEdge=max(pixel*.65,u_moonRadius*.015);
+        if(moonAngle<u_moonRadius+moonEdge){
+            vec3 right=normalize(cross(abs(u_moonDisc.z)>.99?vec3(0,1,0):vec3(0,0,1),u_moonDisc));
+            vec3 up=cross(u_moonDisc,right);
+            vec2 uv=vec2(dot(dirWC,right),dot(dirWC,up))/sin(u_moonRadius);
             float rr=dot(uv,uv);
-            vec3 normal=right*uv.x+up*uv.y-u_moon*sqrt(max(0.,1.-rr));
-            float lit=max(0.,dot(normal,u_sun));
+            float mu=sqrt(max(0.,1.-rr));
+            vec3 normal=right*uv.x+up*uv.y-u_moonDisc*mu;
+            float lit=max(0.,dot(normal,u_moonSun));
             float maria=.82+.08*sin(uv.x*17.+sin(uv.y*23.))+.06*sin(uv.y*29.+uv.x*11.);
             // Display adaptation is applied to lunar radiance as well as the sky.
             // Preserve the terminator/phase, with only a small earthshine floor.
-            vec3 moonRadiance=vec3(.91,.94,1.)*(.0006+lit*.06)*maria*sunTransmission(u_transmittance,u_camera,direction);
+            // Lunar regolith is closer to Lommel-Seeliger than a Lambert sphere:
+            // keep the full-moon limb readable while preserving the terminator.
+            float regolith=.75*(2.*lit/max(.02,lit+mu))+.25*lit;
+            float phase=clamp((1.-dot(u_moonDisc,u_moonSun))*.5,0.,1.);
+            float earthshine=.0006*(1.-phase);
+            vec3 moonRadiance=vec3(.91,.94,1.)*(earthshine+regolith*.06)*maria*sunTransmission(u_transmittance,u_camera,direction);
             vec3 moon=moonRadiance*u_moonBrightness;
-            sky=mix(sky,sky+moon,1.-smoothstep(.94,1.04,rr));
+            sky=mix(sky,L+moon,1.-smoothstep(u_moonRadius-moonEdge,u_moonRadius+moonEdge,moonAngle));
         }
-        // Leave stars/space visible only where atmospheric extinction is weak.
-        float night=1.-smoothstep(-.15,.05,dot(normalize(u_camera),u_sun));
-        sky+=recoverRadiance(background.rgb,u_exposure)*T*mix(.005,.75,night);
     }else sky+=recoverRadiance(background.rgb,u_exposure)*T;
-    out_FragColor=vec4(displayRadiance(sky,u_exposure),1);
+    // Preserve solar HDR for downstream clouds. RGBA8 encoding works without
+    // float colour attachments; the following stage supplies the display image.
+    // A stable, zero-mean sub-byte dither prevents the additional encode target
+    // from quantizing the continuous halo into rings. It changes neither the
+    // exposure nor the mean encoded signal and does not require temporal history.
+    float dither=fract(52.9829189*fract(dot(gl_FragCoord.xy,vec2(.06711056,.00583715))))-.5;
+    out_FragColor=vec4(encodeL(sky)+dither/255.,1);
 }

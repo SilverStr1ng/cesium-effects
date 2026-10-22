@@ -25,7 +25,7 @@ export function distanceTransform(mask:Uint8Array,size:number,occupied=true){
 }
 
 /** Trilinear periodic sampling used only by the independent CPU asset baker. */
-function sample(bytes:Uint8Array,size:number,x:number,y:number,z:number,channel:number){
+export function sampleVolume(bytes:Uint8Array,size:number,x:number,y:number,z:number,channel:number){
   const ix=Math.floor(x),iy=Math.floor(y),iz=Math.floor(z),fx=x-ix,fy=y-iy,fz=z-iz;
   let value=0;
   for(let c=0;c<2;c++)for(let b=0;b<2;b++)for(let a=0;a<2;a++){
@@ -41,6 +41,7 @@ const smooth=(a:number,b:number,x:number)=>{const t=Math.max(0,Math.min(1,(x-a)/
  * An independent density field is retained, so holes/undercuts are truly 3D.
  */
 export function createVoxelCloudField(size=VOXEL_SIZE){
+  const sample=sampleVolume;
   const noise=createCumulusNoise().bytes,bytes=new Uint8Array(size**3*4),mask=new Uint8Array(size**3);
   for(let z=0;z<size;z++)for(let y=0;y<size;y++)for(let x=0;x<size;x++){
     const a=(x+.5)/size*64-.5,b=(y+.5)/size*64-.5,c=(z+.5)/size*64-.5;

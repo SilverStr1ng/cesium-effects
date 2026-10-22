@@ -1,6 +1,8 @@
 import densitySource from '../src/effects/global-clouds/shaders/density.glsl?raw';
 import voxelSource from '../src/effects/global-clouds/shaders/voxel.glsl?raw';
 import {createVoxelCloudField,VOXEL_SIZE} from '../src/effects/global-clouds/VoxelCloudField';
+import {createCloudOptics,CLOUD_OPTICS_SIZE} from '../src/effects/global-clouds/CloudOptics';
+import {createCirrusField} from '../src/effects/global-clouds/CirrusField';
 import radiometry from '../src/effects/global-clouds/shaders/radiometry.glsl?raw';
 import display from '../src/scene/display.glsl?raw';
 import {createCumulusNoise,CUMULUS_NOISE_SIZE as NOISE_SIZE} from '../src/effects/global-clouds/CumulusNoise';
@@ -23,6 +25,12 @@ try{
   cellular.mips.forEach((bytes,i)=>{const size=NOISE_SIZE/2**(i+1);gl.texImage3D(gl.TEXTURE_3D,i+1,gl.RGBA8,size,size,size,0,gl.RGBA,gl.UNSIGNED_BYTE,bytes);});
   for(const p of [gl.TEXTURE_WRAP_S,gl.TEXTURE_WRAP_T,gl.TEXTURE_WRAP_R])gl.texParameteri(gl.TEXTURE_3D,p,gl.REPEAT);
   gl.texParameteri(gl.TEXTURE_3D,gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR);gl.texParameteri(gl.TEXTURE_3D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+  const iceAsset=createCirrusField(),cirrus=gl.createTexture();gl.activeTexture(gl.TEXTURE3);gl.bindTexture(gl.TEXTURE_3D,cirrus);
+  gl.texImage3D(gl.TEXTURE_3D,0,gl.RGBA8,NOISE_SIZE,NOISE_SIZE,NOISE_SIZE,0,gl.RGBA,gl.UNSIGNED_BYTE,iceAsset.bytes);
+  iceAsset.mips.forEach((bytes,i)=>{const size=NOISE_SIZE/2**(i+1);gl.texImage3D(gl.TEXTURE_3D,i+1,gl.RGBA8,size,size,size,0,gl.RGBA,gl.UNSIGNED_BYTE,bytes);});
+  for(const p of [gl.TEXTURE_WRAP_S,gl.TEXTURE_WRAP_T,gl.TEXTURE_WRAP_R])gl.texParameteri(gl.TEXTURE_3D,p,gl.REPEAT);
+  gl.texParameteri(gl.TEXTURE_3D,gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR);gl.texParameteri(gl.TEXTURE_3D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+  gl.activeTexture(gl.TEXTURE0);
   const weather=gl.createTexture();gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,weather);
   gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,WEATHER_WIDTH,WEATHER_HEIGHT,0,gl.RGBA,gl.UNSIGNED_BYTE,createWeather(13));
   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
@@ -32,12 +40,16 @@ try{
   sculpt.mips.forEach((bytes,i)=>{const size=VOXEL_SIZE/2**(i+1);gl.texImage3D(gl.TEXTURE_3D,i+1,gl.RGBA8,size,size,size,0,gl.RGBA,gl.UNSIGNED_BYTE,bytes);});
   for(const p of [gl.TEXTURE_WRAP_S,gl.TEXTURE_WRAP_T,gl.TEXTURE_WRAP_R])gl.texParameteri(gl.TEXTURE_3D,p,gl.REPEAT);
   gl.texParameteri(gl.TEXTURE_3D,gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR);gl.texParameteri(gl.TEXTURE_3D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+  const optics=gl.createTexture();gl.activeTexture(gl.TEXTURE4);gl.bindTexture(gl.TEXTURE_3D,optics);
+  gl.texImage3D(gl.TEXTURE_3D,0,gl.RGBA8,CLOUD_OPTICS_SIZE,CLOUD_OPTICS_SIZE,CLOUD_OPTICS_SIZE,0,gl.RGBA,gl.UNSIGNED_BYTE,createCloudOptics(sculpt.bytes,cellular.bytes));
+  gl.texParameteri(gl.TEXTURE_3D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_3D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
   function run(source:string,main:string,parameters:Record<string,number>={},vectors:Record<string,number[]>={}){
     const fragment=shader(gl.FRAGMENT_SHADER,'#version 300 es\nprecision highp float;\nout vec4 out_FragColor;\n'+source+main),program=gl.createProgram()!;
     gl.attachShader(program,vertex);gl.attachShader(program,fragment);gl.linkProgram(program);
     if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(program)!);
     gl.useProgram(program);gl.uniform1i(gl.getUniformLocation(program,'u_noise'),0);
     gl.uniform1i(gl.getUniformLocation(program,'u_voxels'),2);gl.uniform1i(gl.getUniformLocation(program,'u_voxelReady'),1);gl.uniform1i(gl.getUniformLocation(program,'u_skipVoxels'),1);
+    gl.uniform1i(gl.getUniformLocation(program,'u_cirrus'),3);gl.uniform1i(gl.getUniformLocation(program,'u_cloudOptics'),4);gl.uniform1i(gl.getUniformLocation(program,'u_opticsReady'),1);
     gl.uniform1i(gl.getUniformLocation(program,'u_weather'),1);gl.uniform1f(gl.getUniformLocation(program,'u_exposure'),1.25);gl.uniform1f(gl.getUniformLocation(program,'u_seed'),13);
     for(const name of ['u_transmittance','u_multiple'])gl.uniform1i(gl.getUniformLocation(program,name),1);
     for(const [name,value] of Object.entries({u_base:1.5,u_thickness:3.8,u_coverage:.85,u_density:1.1,u_detail:.55,u_windAngle:0,u_windSpeed:24,u_evolution:0,u_cloudType:0,u_highBase:9,u_highThickness:1.5,u_highCoverage:.35,u_highAngle:0,u_moonFraction:1,u_moonGain:1,...parameters}))gl.uniform1f(gl.getUniformLocation(program,name),value);
@@ -138,6 +150,28 @@ try{
   const voxelRepeat=run(common+density,`void main(){float i=mod(floor(gl_FragCoord.x),256.);vec3 p=vec3(i*.19-6000.,sin(i*.3)*20.,cos(i*.7)*35.);
     if(gl_FragCoord.x>256.)p.x+=12.;out_FragColor=vec4(voxelShape(p,.01).rrr,1);}`);
   let voxelRms=0;for(let i=0;i<256;i++)voxelRms+=((voxelRepeat[i*4]-voxelRepeat[(i+256)*4])/255)**2;voxelRms=Math.sqrt(voxelRms/256);
+  // Integrate the actual medium over fixed planetary columns. Filtering noise
+  // before thresholding used to erase thin ice and change the low-cloud cover.
+  const columnStatistics=[0,1].map(layer=>[.02,.25,.5,1,2,4,16,64].map(footprint=>{
+    const bytes=run(common+density,`void main(){cloudLayer=${layer};float i=floor(gl_FragCoord.x);
+      float z=1.-2.*(i+.5)/512.,phi=i*2.39996323;vec3 n=vec3(sqrt(1.-z*z)*cos(phi),sqrt(1.-z*z)*sin(phi),z);
+      float tau=0.,ds=layerThickness()/32.;
+      for(int j=0;j<32;j++)tau+=cloudDensity(n*(Rg+layerBase()+(float(j)+.5)*ds),${footprint.toFixed(3)},false)*ds;
+      out_FragColor=vec4(1.-exp(-tau),min(1.,tau/16.),0,1);}`,{u_coverage:.62});
+    let opacity=0,mass=0;for(let i=0;i<512;i++){opacity+=bytes[i*4]/255/512;mass+=bytes[i*4+1]/255/512*16;}
+    return {footprint,opacity,mass};
+  }));
+  const farVacuumMain=`void main(){float i=floor(gl_FragCoord.x);vec3 p=normalize(vec3(sin(i*.7),cos(i*.3),sin(i*.11)))*(Rg+2.5);out_FragColor=vec4(vec3(cloudDensity(p,32.,false)),1);}`;
+  const vacuumParameters:Record<string,number>[]=[{u_coverage:0},{u_density:0}];
+  const farVacuum=vacuumParameters.map(p=>run(common+density,farVacuumMain,p));
+  // Compare each blend endpoint to its own filtered representation at the SAME
+  // footprint: hardware trilinear interpolation itself has finite precision.
+  const transition=run(common+density,`void main(){float i=floor(gl_FragCoord.x);vec3 p=normalize(vec3(sin(i*.7),cos(i*.3),sin(i*.11)))*(Rg+2.5);
+    float a=abs(cloudDensity(p,.5001,false)-lowCloudDensity(p,.5001,false));
+    float b=abs(cloudDensity(p,3.9999,false)-farCloudDensity(p,3.9999));out_FragColor=vec4(max(a,b),0,0,1);}`);
+  const nightSide=run(lightSource,`void main(){vec3 p=vec3(0,0,-Rg-3.);CloudPhases phases=scatteringPhases(vec3(0,0,-1));
+    cloudEnvironment(p,phases.sky,phases.horizon);out_FragColor=vec4(illumination(p,.2,32.,phases),1);}`,
+    {u_moonFraction:0},{u_camera:[0,0,23000],u_sun:[0,0,1],u_moon:[0,0,1]});
   const checks=[{name:'900 km displacement must not repeat the regional cloud field',pass:rms>.06,rms,threshold:.06},
     {name:'12 km displacement must not repeat local cloud lobes',pass:localRms>.035,rms:localRms},
     {name:'integrate heterogeneous radiance before the display transform',pass:error<.008,actual:light[0]/255,expected,error},
@@ -153,8 +187,13 @@ try{
     {name:'high wind moves its own cloud field',pass:iceMotion/512>.0001,rms:Math.sqrt(iceMotion/512)},
     {name:'both cloud layers receive phase-dependent moonlight',pass:moonDelta.every(v=>v>.005)&&moonNew.every((v,i)=>v===moonOff[i]),moonDelta},
     {name:'conservative voxel skips preserve optical depth across mips and motion',pass:skipError<.0001&&skipped>0,maxTransmissionError:skipError,skippedIntervals:Math.round(skipped)},
-    {name:'combined voxel morphology does not repeat at 12 km',pass:voxelRms>.08,rms:voxelRms}];
-  gl.deleteTexture(weather);gl.deleteTexture(noise);gl.deleteTexture(voxels);gl.deleteShader(vertex);
+    {name:'combined voxel morphology does not repeat at 12 km',pass:voxelRms>.08,rms:voxelRms},
+    {name:'statistical far volume vanishes for zero coverage and zero density',pass:farVacuum.every(b=>b.every((v,i)=>i%4===3||v===0))},
+    {name:'near/far density has no discontinuity at either blend boundary',pass:transition.every((v,i)=>i%4===3||v<=1),maxDensityDelta:Math.max(...transition.filter((_,i)=>i%4===0))/255},
+    {name:'night-side clouds receive no camera-side daylight',pass:nightSide.every((v,i)=>i%4===3||v===0)},
+    ...columnStatistics.map((samples,layer)=>({name:layer===0?'main cloud column coverage survives satellite filtering':'ice optical depth survives unresolved fibres',
+      pass:samples.every(s=>s.opacity>samples[0].opacity*.8&&s.opacity<samples[0].opacity*1.25),samples}))];
+  gl.deleteTexture(weather);gl.deleteTexture(noise);gl.deleteTexture(voxels);gl.deleteTexture(cirrus);gl.deleteTexture(optics);gl.deleteShader(vertex);
   output.textContent=JSON.stringify({passed:checks.every(x=>x.pass),checks},null,2);
   document.title=checks.every(x=>x.pass)?'PASS · Cloud GPU regressions':'FAIL · Cloud GPU regressions';
 }catch(error){output.textContent=String(error);document.title='ERROR · Cloud GPU regressions';}

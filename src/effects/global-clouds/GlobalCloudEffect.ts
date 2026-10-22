@@ -8,6 +8,8 @@ import {POLAR_SCALE} from '../hillaire-atmosphere/atmosphereMath';
 import density from './shaders/density.glsl?raw';
 import voxel from './shaders/voxel.glsl?raw';
 import {VOXEL_SIZE} from './VoxelCloudField';
+import {CLOUD_OPTICS_SIZE} from './CloudOptics';
+import {createCirrusField} from './CirrusField';
 import march from './shaders/march.glsl?raw';
 import intervals from './shaders/intervals.glsl?raw';
 import lighting from './shaders/droplet-lighting.glsl?raw';
@@ -27,6 +29,8 @@ export interface CloudLighting {
   multipleScattering?:()=>GpuTexture|undefined;
   medium?:()=>Cartesian3;
   exposure?:()=>number;
+  /** Optional encoded scene-linear sky, before display clipping of the sun. */
+  backgroundStage?:string;
 }
 /** A cloud model supplies medium and lighting; shell/depth transport stays shared. */
 export interface CloudModel {
@@ -44,6 +48,8 @@ export class GlobalCloudEffect implements SceneEffect {
   private weather?:GpuTexture;
   private noise?:GpuTexture;
   private voxels?:GpuTexture;
+  private optics?:GpuTexture;
+  private cirrus?:GpuTexture;
   private voxelWorker?:Worker;
   private finishReady?:()=>void;
   ready:Promise<void>=Promise.resolve();
@@ -52,6 +58,8 @@ export class GlobalCloudEffect implements SceneEffect {
   // Dense global banks currently cost more distance fetches than they save.
   private skipVoxels=false;
   private stage?:PostProcessStageComposite;
+  private resolveStage?:PostProcessStage;
+  private volumeStageName='';
   private camera=new Cartesian3();
   private defaultSun=Cartesian3.normalize(new Cartesian3(-.6,-.6,.5),new Cartesian3());
   private defaultMedium=new Cartesian3(1,1,1);
@@ -82,15 +90,17 @@ export class GlobalCloudEffect implements SceneEffect {
     const noise=createCumulusNoise();
     this.noise=createRepeatingVolume(scene,CUMULUS_NOISE_SIZE,noise.bytes,noise.mips);
     if(this.id==='global-clouds'){
+      const ice=createCirrusField();this.cirrus=createRepeatingVolume(scene,CUMULUS_NOISE_SIZE,ice.bytes,ice.mips);
       this.ready=new Promise(resolve=>{this.finishReady=resolve;});
       try{
         const worker=new Worker(new URL('./voxel.worker.ts',import.meta.url),{type:'module'});this.voxelWorker=worker;
         const finish=()=>{worker.terminate();this.voxelWorker=undefined;this.finishReady?.();this.finishReady=undefined;};
-        worker.onmessage=(event:MessageEvent<{bytes:Uint8Array;mips:Uint8Array[];error?:string}>)=>{
+        worker.onmessage=(event:MessageEvent<{bytes:Uint8Array;mips:Uint8Array[];optics:Uint8Array;error?:string}>)=>{
           if(!this.context){finish();return;}
           try{
             if(event.data.error)throw new Error(event.data.error);
             this.voxels=createRepeatingVolume(scene,VOXEL_SIZE,event.data.bytes,event.data.mips);
+            this.optics=createRepeatingVolume(scene,CLOUD_OPTICS_SIZE,event.data.optics);
             context.onStatus('三维体素云与距离场已就绪');
           }catch(error){context.onStatus(`体素云生成失败，使用程序化云：${String(error)}`);}
           finally{finish();}
@@ -104,6 +114,10 @@ export class GlobalCloudEffect implements SceneEffect {
     }
     this.buildStage();
     this.removeUpdate=scene.preUpdate.addEventListener(()=>{
+      // Disabled producers have no output attachment in Cesium's texture cache.
+      // Keep a valid sampler even while the atmosphere is independently off.
+      const background=this.light?.backgroundStage&&this.light.atmosphereEnabled()?this.light.backgroundStage:this.volumeStageName;
+      if(this.resolveStage&&this.resolveStage.uniforms.u_skyRadiance!==background)this.resolveStage.uniforms.u_skyRadiance=background;
       const now=performance.now(),dt=this.lastTime?Math.min(.1,(now-this.lastTime)*.001):0;this.lastTime=now;
       if(!this.enabled)return;
       if(!this.paused){
@@ -134,11 +148,17 @@ export class GlobalCloudEffect implements SceneEffect {
       sampleMode:PostProcessStageSampleMode.LINEAR,
       uniforms:{...this.uniforms(),u_camera:()=>this.camera,u_pixelAngle:()=>this.pixelAngle,
         u_voxels:()=>this.voxels??this.noise!,u_voxelReady:()=>Boolean(this.voxels&&this.voxelEnabled),u_skipVoxels:()=>this.skipVoxels,
+        u_cloudOptics:()=>this.optics??this.noise!,u_opticsReady:()=>Boolean(this.optics&&this.voxelEnabled),
+        u_cirrus:()=>this.cirrus??this.noise!,
         u_multiple:()=>this.light?.multipleScattering?.()??this.weather!,u_medium:()=>this.light?.medium?.()??this.defaultMedium,
         u_exposure:()=>this.light?.exposure?.()??8,
         u_moon:()=>this.light?.moonDirection()??Cartesian3.UNIT_Z,u_moonFraction:()=>this.light?.moonFraction()??0,u_moonGain:()=>this.moonLight,
         u_transmittance:()=>this.light?.transmittance()??this.weather!,u_atmosphere:()=>Boolean(this.light?.atmosphereEnabled()&&this.light.transmittance()&&this.light.multipleScattering?.())}});
-    const output=new PostProcessStage({name:`${this.id}-resolve`,fragmentShader:outputSource+resolve,uniforms:{u_clouds:volume.name,u_exposure:()=>this.light?.exposure?.()??8}});
+    const output=new PostProcessStage({name:`${this.id}-resolve`,fragmentShader:outputSource+resolve,uniforms:{
+      u_clouds:volume.name,u_exposure:()=>this.light?.exposure?.()??8,
+      u_skyRadiance:this.light?.backgroundStage&&this.light.atmosphereEnabled()?this.light.backgroundStage:volume.name,
+      u_hasSkyRadiance:()=>Boolean(this.light?.backgroundStage&&this.light.atmosphereEnabled())}});
+    this.resolveStage=output;this.volumeStageName=volume.name;
     this.stage=new PostProcessStageComposite({name:this.id,stages:[volume,output],inputPreviousStageTexture:false});
     this.stage.enabled=this.enabled;stages.add(this.stage);
   }
@@ -176,7 +196,8 @@ export class GlobalCloudEffect implements SceneEffect {
     if(!this.context)return;this.removeUpdate?.();
     this.voxelWorker?.terminate();this.voxelWorker=undefined;this.finishReady?.();this.finishReady=undefined;
     const s=this.context.viewer.scene;if(this.stage)s.postProcessStages.remove(this.stage);
-    for(const t of [this.noise,this.weather,this.voxels])if(t&&!t.isDestroyed())t.destroy();this.voxels=undefined;
+    this.resolveStage=undefined;
+    for(const t of [this.noise,this.weather,this.voxels,this.optics,this.cirrus])if(t&&!t.isDestroyed())t.destroy();this.voxels=undefined;this.optics=undefined;this.cirrus=undefined;
     this.context=undefined;
   }
 }

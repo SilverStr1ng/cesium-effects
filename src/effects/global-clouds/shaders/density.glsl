@@ -2,12 +2,19 @@ precision highp sampler3D;
 uniform sampler2D u_weather;
 uniform sampler3D u_noise;
 uniform sampler3D u_voxels;
+uniform sampler3D u_cloudOptics;
+uniform sampler3D u_cirrus;
+uniform bool u_opticsReady;
 uniform bool u_voxelReady,u_skipVoxels;
 vec4 voxelShape(vec3 p,float footprint);
 float voxelBodyDepth(vec3 p,float footprint);
 uniform float u_base,u_thickness,u_coverage,u_density,u_detail,u_windAngle,u_seed,u_evolution,u_windSpeed;
 uniform float u_cloudType,u_highBase,u_highThickness,u_highCoverage,u_highAngle;
 int cloudLayer=0;
+float cloudSlant=1.;
+vec3 cloudRay=vec3(0,0,1);
+float cloudStep=0.;
+float farCloudWeight(float footprint){return u_opticsReady?smoothstep(.5,4.,footprint):0.;}
 float layerBase(){return cloudLayer==0?u_base:u_highBase;}
 float layerThickness(){return cloudLayer==0?u_thickness:u_highThickness;}
 // Independent of absolute altitude: the same morphology can be moved vertically.
@@ -39,6 +46,35 @@ float lobes(vec3 q,float footprint){
     return dot(a.rgb-vec3(.5),vec3(1.2,.55,.25))+(b.r-.5)*.35;
 }
 float shapeNoise(vec3 q){return lobes(q+cloudWarp(q),.002);}
+vec2 cloudWeather(vec3 p,float footprint){
+    vec4 w=textureLod(u_weather,weatherUV(advect(p)),0.);
+    float cover=clamp((w.r+u_coverage-1.)/max(.05,u_coverage),0.,1.);
+    if(cover>0.)cover=clamp(cover+(w.b-.5)*.7+(w.a-.5)*1.3,0.,1.);
+    return vec2(cover,cloudTypeValue(w.g));
+}
+vec3 columnOptics(vec2 weather,float slant){
+    float scale=max(0.,u_density*u_thickness/3.8*slant);
+    vec3 uv=vec3(weather,clamp((log2(max(.03125,scale))+5.)/12.,0.,1.));
+    vec3 moments=texture(u_cloudOptics,(uv*31.+.5)/32.).rgb;
+    float thin=min(1.,scale/.03125);
+    return vec3(-log(max(1./255.,1.-moments.r))*thin,moments.g/max(1./255.,1.-moments.g)*scale,moments.b*thin);
+}
+float farCloudDensity(vec3 p,float footprint){
+    if(u_coverage<=0.||u_density<=0.)return 0.;
+    vec2 weather=cloudWeather(p,footprint);
+    float top=cloudTypeTop(weather.y),h=(length(p)-Rg-u_base)/(u_thickness*top);
+    if(h<=0.||h>=1.||weather.x<=0.)return 0.;
+    // Unit-integral vertical volume profile. Its column extinction is the
+    // preintegrated transmission of many resolved, correlated voxel columns.
+    float profile=12.*h*(1.-h)*(1.-h);
+    return columnOptics(weather,cloudSlant).x*profile/(u_thickness*top*cloudSlant);
+}
+float farCloudLightDepth(vec3 p,vec3 light,float footprint){
+    vec2 weather=cloudWeather(p,footprint);float top=cloudTypeTop(weather.y);
+    float h=clamp((length(p)-Rg-u_base)/(u_thickness*top),0.,1.),mu=dot(normalize(p),light);
+    float below=h*h*(6.-8.*h+3.*h*h);
+    return min(32.,columnOptics(weather,1./max(.05,abs(mu))).y*(mu>0.?1.-below:below));
+}
 float lowCloudDensity(vec3 p,float footprint,bool coarse){
     float h=(length(p)-Rg-u_base)/u_thickness;
     if(h<=0.||h>=1.||u_coverage<=0.)return 0.;
@@ -102,6 +138,15 @@ float lowCloudDensity(vec3 p,float footprint,bool coarse){
 // A finite, sparse ice layer. Directional world-space domains avoid longitude
 // seams/pole singularities; warped noncommensurate bands avoid repeated tiles.
 // This is procedural cirrus, not a voxel-authored Nubis asset or ice microphysics.
+vec3 cirrus(vec3 domain,vec3 stretch,float scale,float footprint){
+    // A long integration interval parallel to a strand does not have the same
+    // bandwidth as one crossing it. Include the domain's directional derivative.
+    float c=cos(u_highAngle),s=sin(u_highAngle);
+    vec3 ray=vec3(c*cloudRay.x-s*cloudRay.y,s*cloudRay.x+c*cloudRay.y,cloudRay.z);
+    float support=max(footprint,length(ray*stretch)*cloudStep*.5);
+    float lod=max(0.,log2(max(.001,support)*64./scale));
+    return textureLod(u_cirrus,domain*stretch/scale,lod).rgb;
+}
 float highCloudDensity(vec3 p,float footprint){
     if(u_highCoverage<=0.)return 0.;
     float h=(length(p)-Rg-u_highBase)/u_highThickness;
@@ -118,19 +163,24 @@ float highCloudDensity(vec3 p,float footprint){
     domain+=vec3(warp*15.,warp*3.,warp*9.)+u_seed*.37;
     float curl=cellular(column+vec3(37,-53,81),23.7,footprint).a-.5;
     domain+=vec3(0,curl*1.6,curl*1.1);
-    float broad=cellular(column+vec3(83,121,-71),119.3,footprint).a;
-    float envelope=smoothstep(.44,.64,broad+(weather.b-.5)*.22+(u_highCoverage-.35)*.65);
+    float broad=cirrus(column+vec3(83,121,-71),vec3(1),119.3,footprint).g;
+    float envelope=clamp(broad+(weather.b-.5)*.22+(u_highCoverage-.35)*1.3,0.,1.)*smoothstep(0.,.08,u_highCoverage);
     if(envelope<.001)return 0.;
-    vec3 stretch=vec3(.035,1.,1.);
+    // Hundreds of metres across, tens of kilometres along the flow. Kilometre-
+    // wide value-noise lobes produced soft cumulus-shaped smears at this height.
+    vec3 stretch=vec3(.012,1.,1.);
     domain+=vec3(h*4.,h*.2,0.);
-    float fiber=cellular(domain*stretch,7.1,footprint).a;
-    float breakup=cellular(domain+vec3(32,-51,71),17.3,footprint).a;
-    float fine=cellular(domain*vec3(.025,1.,1.)+vec3(13,27,91),3.1,footprint).a;
-    float strands=fiber+(breakup-.5)*.2+(fine-.5)*.16;
-    float mask=(smoothstep(.53,.7,strands)+.12*smoothstep(.38,.6,strands))*smoothstep(.28,.65,breakup);
+    float fiber=cirrus(domain,stretch,2.1,footprint).r;
+    float breakup=cirrus(domain+vec3(32,-51,71),vec3(1),17.3,footprint).b;
+    float fine=cirrus(domain+vec3(13,27,91),vec3(.008,1.,1.),.71,footprint).r;
+    float mask=(fiber*.84+fine*.16)*1.12*breakup;
     float vertical=smoothstep(0.,.22,h)*(1.-smoothstep(.48,1.,h));
     return envelope*mask*vertical*.26;
 }
 float cloudDensity(vec3 p,float footprint,bool coarse){
-    return cloudLayer==0?lowCloudDensity(p,footprint,coarse):highCloudDensity(p,footprint);
+    if(cloudLayer==1)return highCloudDensity(p,footprint);
+    float far=farCloudWeight(footprint);
+    if(far>=1.)return farCloudDensity(p,footprint);
+    float near=lowCloudDensity(p,footprint,coarse);
+    return far<=0.?near:mix(near,farCloudDensity(p,footprint),far);
 }

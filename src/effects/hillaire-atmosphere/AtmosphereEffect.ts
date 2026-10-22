@@ -1,4 +1,4 @@
-import { Cartesian3, DirectionalLight, JulianDate, Math as CesiumMath, Matrix3, Matrix4, PostProcessStage, type Light } from 'cesium';
+import { Cartesian3, DirectionalLight, JulianDate, Math as CesiumMath, Matrix3, Matrix4, PostProcessStage, PostProcessStageComposite, type Light } from 'cesium';
 import type { EffectContext, SceneEffect } from '../types';
 import { GpuLut, type ComputeFrame } from '../../scene/GpuLut';
 import { atmosphereDefaults, POLAR_SCALE, type AtmosphereParameters } from './atmosphereMath';
@@ -9,18 +9,23 @@ import integrate from './shaders/integrate.glsl?raw';
 import sky from './shaders/sky-view.glsl?raw';
 import composite from './shaders/composite.glsl?raw';
 import display from '../../scene/display.glsl?raw';
-import {celestialPositions,angularRadius,illuminatedFraction} from './CelestialLighting';
+import {celestialPositions,observerCelestials} from './CelestialLighting';
 
 export class AtmosphereEffect implements SceneEffect {
   readonly id='hillaire-atmosphere';
+  readonly radianceStageName='hillaire-atmosphere-radiance';
   readonly parameters={...atmosphereDefaults};
   readonly sunDirection=new Cartesian3();
   readonly moonDirection=new Cartesian3();
+  private sunDiscDirection=new Cartesian3();
+  private moonDiscDirection=new Cartesian3();
+  private moonSunDirection=new Cartesian3();
   clockLinked=true;
   moonFraction=0;
   private sunRadius=.00465;
   private moonRadius=.0045;
   private moonPosition=new Cartesian3();
+  private sunPosition=new Cartesian3();
   private lastCelestialTime?:JulianDate;
   private removeClock?:()=>void;
   enabled=true;
@@ -28,7 +33,7 @@ export class AtmosphereEffect implements SceneEffect {
   private transmittance?: GpuLut;
   private multiple?: GpuLut;
   private sky?: GpuLut;
-  private stage?: PostProcessStage;
+  private stage?: PostProcessStageComposite;
   private dirty=true;
   private skyDirty=true;
   private lastCamera=new Cartesian3(Infinity,Infinity,Infinity);
@@ -57,10 +62,17 @@ export class AtmosphereEffect implements SceneEffect {
     const transport={...uniforms,u_transmittance:()=>this.transmittance!.texture,u_multiple:()=>this.multiple!.texture,u_sun:()=>this.sunDirection};
     const view={...transport,u_camera:()=>this.camera,u_basis:()=>this.basis};
     this.sky=new GpuLut(s,192,108,common+integrate+sky,view);
-    this.stage=new PostProcessStage({name:this.id,fragmentShader:common+display+integrate+composite,
+    const radiance=new PostProcessStage({name:this.radianceStageName,fragmentShader:common+display+integrate+composite,
       uniforms:{...view,u_skyView:()=>this.sky!.texture,u_exposure:()=>this.parameters.exposure,
-        u_sunRadius:()=>this.sunRadius*this.parameters.sunScale,u_moon:()=>this.moonDirection,
+        u_sunRadius:()=>this.sunRadius*this.parameters.sunScale,u_sunDisc:()=>this.sunDiscDirection,u_moonDisc:()=>this.moonDiscDirection,
+        u_moonSun:()=>this.moonSunDirection,
         u_moonRadius:()=>this.moonRadius*this.parameters.moonScale,u_moonBrightness:()=>this.parameters.moonBrightness}});
+    const output=new PostProcessStage({name:'hillaire-atmosphere-display',fragmentShader:common+display+`
+      uniform sampler2D colorTexture;uniform float u_exposure;in vec2 v_textureCoordinates;
+      void main(){out_FragColor=vec4(displayRadiance(decodeL(texture(colorTexture,v_textureCoordinates).rgb),u_exposure),1);}`,
+      uniforms:{u_exposure:()=>this.parameters.exposure}});
+    this.stage=new PostProcessStageComposite({name:this.id,stages:[radiance,output]});
+    this.stage.enabled=this.enabled;
     s.primitives.add(this.primitive);s.postProcessStages.add(this.stage);
     this.updateParameters({});
     this.removeClock=context.viewer.scene.preUpdate.addEventListener(()=>this.updateCelestial());
@@ -70,28 +82,31 @@ export class AtmosphereEffect implements SceneEffect {
     if(!this.context)return;
     const viewer=this.context.viewer,time=viewer.clock.currentTime;
     if(!this.lastCelestialTime||Math.abs(JulianDate.secondsDifference(time,this.lastCelestialTime))>=1){
-      const bodies=celestialPositions(time);Cartesian3.clone(bodies.moon,this.moonPosition);
-      this.moonFraction=illuminatedFraction(bodies.sun,bodies.moon);
-      if(this.clockLinked){
-        const direction=Cartesian3.normalize(bodies.sun,new Cartesian3());
-        Cartesian3.negate(direction,this.light.direction);direction.z*=POLAR_SCALE;
-        Cartesian3.normalize(direction,this.sunDirection);this.skyDirty=true;
-        this.sunRadius=angularRadius(695700000,Cartesian3.magnitude(bodies.sun));
+      const bodies=celestialPositions(time);Cartesian3.clone(bodies.moon,this.moonPosition);Cartesian3.clone(bodies.sun,this.sunPosition);
+      this.lastCelestialTime=JulianDate.clone(time);
+    }
+    if(this.clockLinked){
+        const direction=Cartesian3.normalize(this.sunPosition,new Cartesian3());
+        Cartesian3.negate(direction,this.light.direction);direction.z*=POLAR_SCALE;Cartesian3.normalize(direction,direction);
+        if(Cartesian3.distance(direction,this.sunDirection)>1e-12)this.skyDirty=true;
+        Cartesian3.clone(direction,this.sunDirection);
         const lon=CesiumMath.toRadians(-97.52),lat=CesiumMath.toRadians(35.46);
-        const d=Cartesian3.normalize(bodies.sun,new Cartesian3());
+        const d=Cartesian3.normalize(this.sunPosition,new Cartesian3());
         const east=-Math.sin(lon)*d.x+Math.cos(lon)*d.y;
         const north=-Math.sin(lat)*Math.cos(lon)*d.x-Math.sin(lat)*Math.sin(lon)*d.y+Math.cos(lat)*d.z;
         const up=Math.cos(lat)*Math.cos(lon)*d.x+Math.cos(lat)*Math.sin(lon)*d.y+Math.sin(lat)*d.z;
         this.parameters.elevation=CesiumMath.toDegrees(Math.asin(up));
         this.parameters.azimuth=(CesiumMath.toDegrees(Math.atan2(east,north))+360)%360;
-      }
-      this.lastCelestialTime=JulianDate.clone(time);
     }
-    const relative=Cartesian3.subtract(this.moonPosition,viewer.camera.positionWC,new Cartesian3());
-    this.moonRadius=angularRadius(1737400,Cartesian3.magnitude(relative));
+    const state=observerCelestials({sun:this.sunPosition,moon:this.moonPosition},viewer.camera.positionWC,
+      this.clockLinked?undefined:Cartesian3.negate(this.light.direction,new Cartesian3()));
+    this.sunRadius=state.sunRadius;this.moonRadius=state.moonRadius;this.moonFraction=state.moonFraction;
+    Cartesian3.clone(state.sunDirection,this.sunDiscDirection);Cartesian3.clone(state.moonDirection,this.moonDiscDirection);
+    Cartesian3.clone(state.moonSunDirection,this.moonSunDirection);
+    const relative=Cartesian3.clone(state.moonDirection);
     relative.z*=POLAR_SCALE;Cartesian3.normalize(relative,this.moonDirection);
   }
-  setClockLinked(value:boolean){this.clockLinked=value;this.lastCelestialTime=undefined;if(!value)this.updateParameters({});this.updateCelestial();}
+  setClockLinked(value:boolean){this.clockLinked=value;if(!value)this.updateParameters({});this.updateCelestial();}
   private update(frame:ComputeFrame){
     if(!this.enabled||!this.context||!frame.passes.render)return;
     const p=this.context.viewer.camera.positionWC;
@@ -113,7 +128,7 @@ export class AtmosphereEffect implements SceneEffect {
     const changed=this.medium.x!==values.rayleigh||this.medium.y!==values.mie||this.medium.z!==values.ozone;
     Cartesian3.fromElements(values.rayleigh,values.mie,values.ozone,this.medium);
     if(changed)this.dirty=true;
-    if(this.clockLinked){this.lastCelestialTime=undefined;return;}
+    if(this.clockLinked){this.updateCelestial();return;}
     // Solar controls are anchored at the lab location; one ECEF direction lights the entire planet.
     const lon=CesiumMath.toRadians(-97.52),lat=CesiumMath.toRadians(35.46);
     const az=CesiumMath.toRadians(values.azimuth),el=CesiumMath.toRadians(values.elevation);
@@ -124,16 +139,20 @@ export class AtmosphereEffect implements SceneEffect {
     Cartesian3.add(d,Cartesian3.multiplyByScalar(up,Math.sin(el),up),d);
     Cartesian3.negate(d,this.light.direction);
     d.z*=POLAR_SCALE;Cartesian3.normalize(d,this.sunDirection);
+    this.updateCelestial();
   }
   setEnabled(value:boolean){this.enabled=value;if(this.stage)this.stage.enabled=value;}
   setPaused(paused:boolean){if(this.context)this.context.viewer.clock.shouldAnimate=!paused;}
   reset(){this.updateParameters(atmosphereDefaults);this.dirty=true;}
   focus(){this.view('ground');}
-  focusMoon(){
+  focusMoon(){this.focusBody('moon');}
+  focusSun(){this.focusBody('sun');}
+  private focusBody(body:'sun'|'moon'){
     if(!this.context)return;
     this.updateCelestial();
     // Move beneath the Moon so the demonstration remains useful at any lunar hour.
-    const moon=Cartesian3.normalize(this.moonPosition,new Cartesian3());
+    const position=body==='moon'?this.moonPosition:this.clockLinked?this.sunPosition:Cartesian3.negate(this.light.direction,new Cartesian3());
+    const moon=Cartesian3.normalize(position,new Cartesian3());
     this.context.viewer.camera.lookAtTransform(Matrix4.IDENTITY);
     this.context.viewer.camera.flyTo({destination:Cartesian3.fromDegrees(CesiumMath.toDegrees(Math.atan2(moon.y,moon.x)),CesiumMath.toDegrees(Math.asin(moon.z)),1000),
       orientation:{heading:0,pitch:CesiumMath.toRadians(85),roll:0},duration:1.4});

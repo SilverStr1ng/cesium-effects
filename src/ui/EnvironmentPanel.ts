@@ -9,7 +9,7 @@ export function mountEnvironmentPanel(sidebar:HTMLElement,atmosphere:AtmosphereE
     <p class="environment-description">从地平线到太空的行星散射</p>
     <label class="clock-link"><input id="clock-linked" type="checkbox" checked> 跟随 Cesium 时间</label>
     <label class="environment-label" for="sky-time">Cesium 时间 · UTC</label><input id="sky-time" type="datetime-local" step="60">
-    <div class="environment-presets"><button id="clock-play">播放时间</button><select id="clock-speed" aria-label="时间倍率"><option value="60">60×</option><option value="600" selected>600×</option><option value="3600">3600×</option></select><button id="moon-view">观察月亮</button></div>
+    <div class="environment-presets"><button id="clock-play">播放时间</button><select id="clock-speed" aria-label="时间倍率"><option value="60">60×</option><option value="600" selected>600×</option><option value="3600">3600×</option></select><button id="sun-view">观察太阳</button><button id="moon-view">观察月亮</button></div>
     <p id="lunar-phase" class="environment-description"></p>
     <div class="environment-presets"><button data-sun="28">晴昼</button><button data-sun="1">日落</button><button data-sun="-18">夜晚</button></div>
     <details class="environment-details"><summary>散射与日月参数</summary><div id="atmosphere-controls"></div></details>
@@ -49,11 +49,12 @@ export function mountEnvironmentPanel(sidebar:HTMLElement,atmosphere:AtmosphereE
   clockButton.onclick=()=>{viewer.clock.shouldAnimate=!viewer.clock.shouldAnimate;clockButton.textContent=viewer.clock.shouldAnimate?'暂停时间':'播放时间';};
   panel.querySelector<HTMLSelectElement>('#clock-speed')!.onchange=e=>{viewer.clock.multiplier=Number((e.target as HTMLSelectElement).value);};
   panel.querySelector<HTMLButtonElement>('#moon-view')!.onclick=()=>atmosphere.focusMoon();
+  panel.querySelector<HTMLButtonElement>('#sun-view')!.onclick=()=>atmosphere.focusSun();
   let last=0;
   const removeTick=viewer.scene.postRender.addEventListener(()=>{
     const now=performance.now();if(now-last<500)return;last=now;
     if(document.activeElement!==date)date.value=JulianDate.toIso8601(viewer.clock.currentTime).slice(0,16);
-    panel.querySelector('#lunar-phase')!.textContent=`月面照明 ${(atmosphere.moonFraction*100).toFixed(0)}% · 日月大小 1× 为真实视直径`;
+    panel.querySelector('#lunar-phase')!.textContent=`${atmosphere.clockLinked?'当前观察点月相':'手动太阳下的模拟月相'} · 月面照明 ${(atmosphere.moonFraction*100).toFixed(0)}% · 大小 1× 为真实视直径`;
     if(linked.checked)for(const key of ['elevation','azimuth'] as const){const input=panel.querySelector<HTMLInputElement>(`#sky-${key}`)!;input.value=String(atmosphere.parameters[key]);input.previousElementSibling!.querySelector('output')!.value=atmosphere.parameters[key].toFixed(1);}
     clockButton.textContent=viewer.clock.shouldAnimate?'暂停时间':'播放时间';
   });
