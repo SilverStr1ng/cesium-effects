@@ -2,6 +2,10 @@
 
 独立 effect：`src/effects/global-clouds/GlobalCloudEffect.ts`，注册 ID `global-clouds`。与 `hillaire-atmosphere` 分开管理；可以独立挂载，也可通过 `CloudLighting` 接口共享太阳、月亮和大气透射率纹理。
 
+## 2026-10-23：世界局部云柱过滤与球面天气
+
+当前版本将约 30 km 的云团结构保留在世界位置，条件光学表只统计未解析体素材质。12×12 子云柱过滤最终 T 和覆盖率；0.35–2 km 足迹内混合分别积分后的线性 L/T。新增锋面、旋涡、对流、层积云和晴空区，以及 footprint、实际 mip、天气、等效消光、tau、T 和云柱覆盖调试视图。固定纹理总量不变；表通道 B 现在是条件内部遮蔽概率，以下历史版本的双流反射、0.5–4 km 密度混合描述不再代表当前实现。详见 [本轮实现、成本与验证记录](global-lod-validation.md)。
+
 ## 2026-10-22：全球大气与光照基础修正
 
 本轮从 `9d6524f` 继续，审查基线 `df4ab3c` 之后已有的远景统计云、卷云、球壳排序、深度裁切、WGS84 光程、近景体素和资源释放均保留。根因、固定条件、真实 WebGL 数值及 GPU 成本见 [验证报告](lighting-validation.md)。

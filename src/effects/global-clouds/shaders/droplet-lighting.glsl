@@ -53,13 +53,16 @@ float waterLightDepth(vec3 p,vec3 light,float rho,float footprint){
         float t0=nearStep*pow(end/nearStep,a),t1=nearStep*pow(end/nearStep,b),t=(t0+t1)*.5;
         float angle=float(j)*2.399963,radial=sqrt((float(j)+.5)/float(LIGHT_STEPS));
         vec3 cone=(tangent*cos(angle)+bitangent*sin(angle))*radial*t*.25;
+        #ifdef LAYERED_CLOUDS
+        // This cone is only reached by the resolved main-cloud branch. Calling
+        // the dispatcher here would inline an entire statistical footprint
+        // filter into every shadow tap on ANGLE, even though it cannot execute.
+        float sampleDensity=lowCloudDensity(p+light*t+cone,max(footprint,t*.25),t>.1);
+        #else
         float sampleDensity=cloudDensity(p+light*t+cone,max(footprint,t*.25),t>.1);
+        #endif
         tau+=sampleDensity*(t1-t0);
     }
-    #ifdef LAYERED_CLOUDS
-    float far=farCloudWeight(footprint);
-    if(far>0.)tau=mix(tau,farCloudLightDepth(p,light,footprint),far);
-    #endif
     return tau;
 }
 float waterScatter(vec3 phase,float tau){
@@ -71,23 +74,18 @@ vec3 waterDirectional(vec3 p,vec3 light,vec3 phase,float rho,float footprint,flo
     float tau=waterLightDepth(p,light,rho,footprint);
     vec3 resolved=transmission*waterScatter(phase,tau);
     #ifdef LAYERED_CLOUDS
+    if(cloudLayer==0&&farCloudWeight(footprint)>=1.){
+        // Laplace transform of the locally fitted gamma depth distribution.
+        // Apply each scattering order to its own optical scale; do not use
+        // exp(-E[tau]) or exponentiate an already averaged transmission.
+        vec3 meanTransmission=pow(vec3(1.)+tau*vec3(1.,.5,.25)/farShape,vec3(-farShape));
+        resolved=transmission*dot(phase*vec3(1.,.5,.25),meanTransmission);
+    }
     if(u_voxelReady&&cloudLayer==0&&farCloudWeight(footprint)<1.){
         float probability=mix(.18,1.,interior);
         float forward=smoothstep(.35,.95,dot(normalize(p-u_camera),light));
         vec3 extinction=vec3(1.,mix(.55,.32,forward*interior),mix(.28,.12,forward*interior));
         resolved=transmission*dot(phase*vec3(1.,.5*probability,.25*probability),exp(-tau*extinction));
-    }
-    float far=cloudLayer==0?farCloudWeight(footprint):0.;
-    if(far>0.){
-        // Unresolved opaque columns keep their conditional multiple scattering.
-        // Applying their mean shadow to a dilute effective medium darkens them
-        // twice. The table's bounded two-flux reflectance supplies a local,
-        // sun-dependent source; the original directional lobe handles thin light.
-        float reflectance=columnOptics(cloudWeather(p,footprint),1.).z;
-        float above=smoothstep(-.1,.1,dot(normalize(u_camera-p),normalize(p)));
-        float diffuse=mix(1.-reflectance,reflectance,above)*max(0.,dot(normalize(p),light))/PI;
-        vec3 statistical=transmission*(diffuse+waterScatter(phase,tau)*(1.-reflectance));
-        return mix(resolved,statistical,far);
     }
     #endif
     return resolved;
@@ -105,7 +103,10 @@ vec3 illumination(vec3 p,float rho,float footprint,CloudPhases phases){
     powder=cloudLayer==1?1.:mix(1.,1.-exp(-rho/7.*2.),.7);
     if(cloudLayer==1)baseShadow=1.;
     if(u_voxelReady&&cloudLayer==0){
-        interior=(1.-exp(-3.*voxelBodyDepth(p,footprint)))*smoothstep(.1,3.,rho);
+        // No voxel mip fetch in the unresolved branch. Its conditional column
+        // extinction supplies the interior probability; empty area is excluded.
+        interior=farCloudWeight(footprint)>=1.?farMoments.b:
+            (1.-exp(-3.*voxelBodyDepth(p,footprint)))*smoothstep(.1,3.,rho);
         ambientVisibility=mix(1.,.55,interior);
         powder=1.;baseShadow=mix(.8,1.,smoothstep(0.,.15,h));
     }

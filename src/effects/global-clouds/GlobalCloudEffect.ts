@@ -44,6 +44,8 @@ export interface CloudModel {
   lighting:string;
   defines?:string;
 }
+export const cloudDebugViews=['off','footprint','mip','weather','density','optical-depth','transmittance','column-coverage'] as const;
+export type CloudDebugView=typeof cloudDebugViews[number];
 export class GlobalCloudEffect implements SceneEffect {
   readonly id:string;
   moonLight=1;
@@ -75,6 +77,7 @@ export class GlobalCloudEffect implements SceneEffect {
   private pixelAngle=.001;
   private preferHdr=true;
   renderTargetMode:'RGBA16F'|'RGBA8'='RGBA8';
+  debugView:CloudDebugView='off';
   private removeUpdate?:()=>void;
   constructor(private light?:CloudLighting,private model:CloudModel={id:'global-clouds',density:density+voxel,lighting,defines:'#define LAYERED_CLOUDS\n'}){this.id=model.id;}
   get motion(){return {angle:this.windAngle,highAngle:this.highWindAngle,evolution:this.evolution};}
@@ -151,9 +154,15 @@ export class GlobalCloudEffect implements SceneEffect {
         uniform float u_pixelAngle,u_moonFraction,u_moonGain;struct CloudPhases {vec3 sun;vec3 moon;};`+
         skyIrradiance+this.model.lighting+'\n#ifdef LAYERED_CLOUDS\n'+intervals+'\n#endif\n'+march,
       sampleMode:PostProcessStageSampleMode.LINEAR,
-      uniforms:{...this.uniforms(),u_camera:()=>this.camera,u_pixelAngle:()=>this.pixelAngle,
+      uniforms:{...this.uniforms(),
+        // Cesium 1.146 allocates by each stage's immediate dependencies, not
+        // future consumers. Keep the HDR producer live through this write:
+        // at scale=1 its attachment otherwise aliases the cloud volume before
+        // resolve can read it. Metadata-only uniform; no shader texture fetch.
+        ...(this.light?.backgroundStage?{u_preserveSkyRadiance:this.light.backgroundStage}:{}),
+        u_camera:()=>this.camera,u_pixelAngle:()=>this.pixelAngle,u_debugView:()=>cloudDebugViews.indexOf(this.debugView),
         u_voxels:()=>this.voxels??this.noise!,u_voxelReady:()=>Boolean(this.voxels&&this.voxelEnabled),u_skipVoxels:()=>this.skipVoxels,
-        u_cloudOptics:()=>this.optics??this.noise!,u_opticsReady:()=>Boolean(this.optics&&this.voxelEnabled),
+        u_cloudOptics:()=>this.optics??this.noise!,u_opticsReady:()=>Boolean(this.optics&&this.voxelEnabled),u_columnGrid:12,
         u_cirrus:()=>this.cirrus??this.noise!,
         u_multiple:()=>this.light?.multipleScattering?.()??this.weather!,u_medium:()=>this.light?.medium?.()??this.defaultMedium,
         u_skyIrradiance:()=>this.light?.skyIrradiance?.()??this.weather!,u_hasSkyIrradiance:()=>Boolean(this.light?.skyIrradiance?.()),
@@ -161,7 +170,7 @@ export class GlobalCloudEffect implements SceneEffect {
         u_moon:()=>this.light?.moonDirection()??Cartesian3.UNIT_Z,u_moonFraction:()=>this.light?.moonFraction()??0,u_moonGain:()=>this.moonLight,
         u_transmittance:()=>this.light?.transmittance()??this.weather!,u_atmosphere:()=>Boolean(this.light?.atmosphereEnabled()&&this.light.transmittance()&&this.light.multipleScattering?.())}});
     const output=new PostProcessStage({name:`${this.id}-resolve`,fragmentShader:outputSource+resolve,uniforms:{
-      u_clouds:volume.name,u_exposure:()=>this.light?.exposure?.()??8,
+      u_clouds:volume.name,u_exposure:()=>this.light?.exposure?.()??8,u_debugView:()=>cloudDebugViews.indexOf(this.debugView),
       u_skyRadiance:this.light?.backgroundStage&&this.light.atmosphereEnabled()?this.light.backgroundStage:volume.name,
       u_skyRadianceHdr:()=>this.light?.backgroundIsHdr?.()??false,
       u_hasSkyRadiance:()=>Boolean(this.light?.backgroundStage&&this.light.atmosphereEnabled())}});
@@ -185,6 +194,7 @@ export class GlobalCloudEffect implements SceneEffect {
   /** Diagnostic switches compare the same field with/without acceleration. */
   setVoxelEnabled(value:boolean){this.voxelEnabled=value;}
   setVoxelSkipping(value:boolean){this.skipVoxels=value;}
+  setDebugView(value:CloudDebugView){if(cloudDebugViews.includes(value))this.debugView=value;}
   setEnabled(value:boolean){this.enabled=value;if(this.stage)this.stage.enabled=value;}
   setPaused(value:boolean){this.paused=value;}
   reset(){this.windAngle=0;this.highWindAngle=0;this.evolution=0;this.updateParameters(cloudDefaults);}

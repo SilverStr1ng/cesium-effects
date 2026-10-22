@@ -95,11 +95,12 @@ try{
   // A ray missing both shells must never call scatteringPhases at all.
   const instrumented=lighting.replace('CloudPhases scatteringPhases(vec3 d){','CloudPhases scatteringPhases(vec3 d){phaseCalls+=1.;');
   const marchStub=`uniform sampler2D depthTexture;uniform float u_pixelAngle,u_highBase,u_highThickness,u_highCoverage;
-    uniform bool u_voxelReady,u_skipVoxels;int cloudLayer=0;float cloudSlant=1.,cloudStep=0.,phaseCalls=0.;vec3 cloudRay;
+    uniform bool u_voxelReady,u_skipVoxels,u_opticsReady;int cloudLayer=0,cloudRepresentation=0;float cloudSlant=1.,cloudStep=0.,phaseCalls=0.,farShape=64.;vec3 cloudRay,farAnchor,cloudScreenRight,cloudScreenUp;vec4 farMoments=vec4(0);float debugMipA=-1.,debugMipB=-1.;
     float layerBase(){return cloudLayer==0?u_base:u_highBase;}float layerThickness(){return cloudLayer==0?u_thickness:u_highThickness;}
     float voxelEmptyDistance(vec3 p,float f){return 0.;}float voxelBodyDepth(vec3 p,float f){return 0.;}
     float farCloudWeight(float f){return 0.;}float farCloudLightDepth(vec3 p,vec3 l,float f){return 0.;}
-    vec3 columnOptics(vec3 w,float s){return vec3(0);}vec3 cloudWeather(vec3 p,float f){return vec3(0);}
+    float lowCloudDensity(vec3 p,float f,bool coarse){return 0.;}
+    vec3 columnOptics(vec2 w,float s){return vec3(0);}vec2 cloudWeather(vec3 p,float f){return vec2(0);}
     vec3 cloudSource(vec3 light){return light;}vec3 storeCloudRadiance(vec3 light){return vec3(phaseCalls,0,0);}`;
   const calls=[1,-1].map(sign=>Number(gpu.draw('#define LAYERED_CLOUDS\n#define CLOUD_STEPS 4\n#define CLOUD_SUBSTEPS 1\n#define LIGHT_STEPS 3\n'+
     cesium.replace('czm_inverseView=mat4(1)',`czm_inverseView=mat4(1,0,0,0,0,1,0,0,0,0,${sign},0,0,0,0,1)`)+common+transport+irradianceSample+globals+marchStub+instrumented+intervals+march,1,1,

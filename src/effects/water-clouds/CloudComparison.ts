@@ -1,4 +1,4 @@
-import {GlobalCloudEffect,type CloudLighting} from '../global-clouds/GlobalCloudEffect';
+import {GlobalCloudEffect,type CloudLighting,type CloudDebugView} from '../global-clouds/GlobalCloudEffect';
 import {WaterCloudEffect} from './WaterCloudEffect';
 import type {CloudParameters,CloudQuality,CloudView} from '../global-clouds/config';
 import type {EffectContext} from '../types';
@@ -25,6 +25,7 @@ export class CloudComparison {
   }
   updateParameters(parameters:Partial<CloudParameters>){for(const effect of Object.values(this.effects))effect.updateParameters(parameters);}
   setQuality(quality:CloudQuality){for(const effect of Object.values(this.effects))effect.setQuality(quality);}
+  setDebugView(value:CloudDebugView){this.effects.cellular.setDebugView(value);}
   setEnabled(value:boolean){this.enabled=value;for(const [mode,effect] of Object.entries(this.effects))effect.setEnabled(value&&mode===this.mode);}
   setPaused(value:boolean){for(const effect of Object.values(this.effects))effect.setPaused(value);}
   setMoonLight(value:number){for(const effect of Object.values(this.effects))effect.moonLight=Math.max(0,Math.min(4,value));}

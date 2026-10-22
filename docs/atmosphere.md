@@ -16,6 +16,8 @@
 
 天空、太阳、月亮先在线性辐亮度中相加，最终使用 `scene/display.glsl` 的 ACES 拟合曲线与 Gamma 编码。两种云使用同一显示变换。Cesium 地表和星空输入已是 LDR，只能用逆曲线赋予有效线性值：这不是 Cesium 原始材质辐亮度，不能恢复已截断的地表高光，也不能保证其色调映射与这里的 ACES 拟合完全一致。自定义日月不经过这条恢复路径。外部 `CloudLighting` 未提供 HDR 附件或天空照明缓存时保留原兼容近似；本应用正常连接时不依赖 `recoverRadiance` 重建太阳。
 
+2026-10-23 的实际画质切换检查还修复了 Cesium 附件生命周期：云积分阶段必须声明保留大气输出的命名依赖，否则 high 档的同尺寸附件会被过早复用，大气 HDR 在 resolve 之前已经遭到覆盖。该依赖不增加着色采样；`tests/cloud-pipeline.html` 在真实 Cesium 缓存中覆盖 HDR/RGBA8 的 low→medium→high→medium，零密度云应逐字节保留背景。详情见 [全球云 LOD 验证](global-lod-validation.md)。
+
 地表深度通过 `atmosphereRayDistance` 转到椭球缩放后的射线距离，与云共用转换。此前漏乘射线方向的缩放长度，在轨道高度提前截断空气积分，造成海面网格状明暗；此问题已修复。
 
 世界坐标以公里为积分单位；WGS84 极轴缩放到等效球体，使地面/极区不会与球形大气错开。椭球光程因此是近似。这里没有 UE 的视锥 3D aerial-perspective LUT、真实体积阴影或自动曝光；自定义效果虽保留 HDR，Cesium 地表仍是上述 LDR 近似，不宣称与 UE 完全等价。

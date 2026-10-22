@@ -1,7 +1,9 @@
+float debugMipA=-1.,debugMipB=-1.;
 vec3 voxelPosition(vec3 p){return advect(p)+vec3(.81,.27,.13)*u_evolution;}
 vec3 voxelRotate(vec3 q){return vec3(dot(q,vec3(.36,.48,-.8)),dot(q,vec3(-.8,.6,0)),dot(q,vec3(.48,.64,.6)));}
 vec4 voxelAt(vec3 q,float scale,float footprint){
     float lod=max(0.,log2(max(.001,footprint)*128./scale));
+    if(scale<10.)debugMipA=max(debugMipA,min(7.,lod));else debugMipB=max(debugMipB,min(7.,lod));
     return textureLod(u_voxels,q/scale,lod);
 }
 vec4 voxelShape(vec3 p,float footprint){
@@ -14,6 +16,7 @@ vec4 voxelShape(vec3 p,float footprint){
 }
 float voxelEmptyDistance(vec3 p,float footprint){
     if(!u_voxelReady||!u_skipVoxels||cloudLayer!=0||farCloudWeight(footprint)>0.)return 0.;
+    debugMipA=max(0.,debugMipA);debugMipB=max(0.,debugMipB);
     vec3 q=voxelPosition(p);
     float a=textureLod(u_voxels,(q+u_seed*.23)/7.83,0.).g*(16./128.)*7.83;
     float b=textureLod(u_voxels,(voxelRotate(q)+u_seed*.31)/13.57,0.).g*(16./128.)*13.57;

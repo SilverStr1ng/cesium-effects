@@ -53,7 +53,7 @@ try{
     gl.uniform1i(gl.getUniformLocation(program,'u_cirrus'),3);gl.uniform1i(gl.getUniformLocation(program,'u_cloudOptics'),4);gl.uniform1i(gl.getUniformLocation(program,'u_opticsReady'),1);
     gl.uniform1i(gl.getUniformLocation(program,'u_weather'),1);gl.uniform1f(gl.getUniformLocation(program,'u_exposure'),1.25);gl.uniform1f(gl.getUniformLocation(program,'u_seed'),13);
     for(const name of ['u_transmittance','u_multiple','u_skyIrradiance'])gl.uniform1i(gl.getUniformLocation(program,name),1);
-    for(const [name,value] of Object.entries({u_base:1.5,u_thickness:3.8,u_coverage:.85,u_density:1.1,u_detail:.55,u_windAngle:0,u_windSpeed:24,u_evolution:0,u_cloudType:0,u_highBase:9,u_highThickness:1.5,u_highCoverage:.35,u_highAngle:0,u_moonFraction:1,u_moonGain:1,...parameters}))gl.uniform1f(gl.getUniformLocation(program,name),value);
+    for(const [name,value] of Object.entries({u_columnGrid:12,u_base:1.5,u_thickness:3.8,u_coverage:.85,u_density:1.1,u_detail:.55,u_windAngle:0,u_windSpeed:24,u_evolution:0,u_cloudType:0,u_highBase:9,u_highThickness:1.5,u_highCoverage:.35,u_highAngle:0,u_moonFraction:1,u_moonGain:1,...parameters}))gl.uniform1f(gl.getUniformLocation(program,name),value);
     for(const [name,v] of Object.entries(vectors))gl.uniform3f(gl.getUniformLocation(program,name),v[0],v[1],v[2]);
     gl.viewport(0,0,512,1);gl.drawArrays(gl.TRIANGLES,0,3);
     const bytes=new Uint8Array(512*4);gl.readPixels(0,0,512,1,gl.RGBA,gl.UNSIGNED_BYTE,bytes);
@@ -156,9 +156,13 @@ try{
   const columnStatistics=[0,1].map(layer=>[.02,.25,.5,1,2,4,16,64].map(footprint=>{
     const bytes=run(common+density,`void main(){cloudLayer=${layer};float i=floor(gl_FragCoord.x);
       float z=1.-2.*(i+.5)/512.,phi=i*2.39996323;vec3 n=vec3(sqrt(1.-z*z)*cos(phi),sqrt(1.-z*z)*sin(phi),z);
-      float tau=0.,ds=layerThickness()/32.;
-      for(int j=0;j<32;j++)tau+=cloudDensity(n*(Rg+layerBase()+(float(j)+.5)*ds),${footprint.toFixed(3)},false)*ds;
-      out_FragColor=vec4(1.-exp(-tau),min(1.,tau/16.),0,1);}`,{u_coverage:.62});
+      cloudRay=-n;cloudScreenRight=normalize(cross(vec3(0,0,1),n));cloudScreenUp=cross(n,cloudScreenRight);
+      float nearTau=0.,farTau=0.,ds=layerThickness()/32.;float blend=cloudLayer==0?farCloudWeight(${footprint.toFixed(3)}):0.;
+      for(int j=0;j<32;j++){vec3 p=n*(Rg+layerBase()+(float(j)+.5)*ds);
+        if(blend<1.)nearTau+=(cloudLayer==0?lowCloudDensity(p,${footprint.toFixed(3)},false):highCloudDensity(p,${footprint.toFixed(3)}))*ds;
+        if(blend>0.)farTau+=farCloudDensity(p,${footprint.toFixed(3)})*ds;}
+      float T=mix(exp(-nearTau),exp(-farTau),blend);
+      out_FragColor=vec4(1.-T,min(1.,-log(max(1e-7,T))/16.),0,1);}`,{u_coverage:.62});
     let opacity=0,mass=0;for(let i=0;i<512;i++){opacity+=bytes[i*4]/255/512;mass+=bytes[i*4+1]/255/512*16;}
     return {footprint,opacity,mass};
   }));
@@ -168,8 +172,8 @@ try{
   // Compare each blend endpoint to its own filtered representation at the SAME
   // footprint: hardware trilinear interpolation itself has finite precision.
   const transition=run(common+density,`void main(){float i=floor(gl_FragCoord.x);vec3 p=normalize(vec3(sin(i*.7),cos(i*.3),sin(i*.11)))*(Rg+2.5);
-    float a=abs(cloudDensity(p,.5001,false)-lowCloudDensity(p,.5001,false));
-    float b=abs(cloudDensity(p,3.9999,false)-farCloudDensity(p,3.9999));out_FragColor=vec4(max(a,b),0,0,1);}`);
+    float a=abs(cloudDensity(p,.3499,false)-lowCloudDensity(p,.3499,false));
+    float b=abs(cloudDensity(p,2.0001,false)-farCloudDensity(p,2.0001));out_FragColor=vec4(max(a,b),0,0,1);}`);
   const nightSide=run(lightSource,`void main(){vec3 p=vec3(0,0,-Rg-3.);CloudPhases phases=scatteringPhases(vec3(0,0,-1));
     out_FragColor=vec4(illumination(p,.2,32.,phases),1);}`,
     {u_moonFraction:0},{u_camera:[0,0,23000],u_sun:[0,0,1],u_moon:[0,0,1]});
@@ -190,7 +194,7 @@ try{
     {name:'conservative voxel skips preserve optical depth across mips and motion',pass:skipError<.0001&&skipped>0,maxTransmissionError:skipError,skippedIntervals:Math.round(skipped)},
     {name:'combined voxel morphology does not repeat at 12 km',pass:voxelRms>.08,rms:voxelRms},
     {name:'statistical far volume vanishes for zero coverage and zero density',pass:farVacuum.every(b=>b.every((v,i)=>i%4===3||v===0))},
-    {name:'near/far density has no discontinuity at either blend boundary',pass:transition.every((v,i)=>i%4===3||v<=1),maxDensityDelta:Math.max(...transition.filter((_,i)=>i%4===0))/255},
+    {name:'segment blend endpoints dispatch to the matching density representation',pass:transition.every((v,i)=>i%4===3||v<=1),maxDensityDelta:Math.max(...transition.filter((_,i)=>i%4===0))/255},
     {name:'night-side clouds receive no camera-side daylight',pass:nightSide.every((v,i)=>i%4===3||v===0)},
     ...columnStatistics.map((samples,layer)=>({name:layer===0?'main cloud column coverage survives satellite filtering':'ice optical depth survives unresolved fibres',
       pass:samples.every(s=>s.opacity>samples[0].opacity*.8&&s.opacity<samples[0].opacity*1.25),samples}))];

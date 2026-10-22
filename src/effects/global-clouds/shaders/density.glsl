@@ -5,6 +5,9 @@ uniform sampler3D u_voxels;
 uniform sampler3D u_cloudOptics;
 uniform sampler3D u_cirrus;
 uniform bool u_opticsReady;
+// Runtime bound avoids ANGLE unrolling 144 texture-heavy subcolumns into each
+// density/light call. Production fixes this to 12 at every quality.
+uniform float u_columnGrid;
 uniform bool u_voxelReady,u_skipVoxels;
 vec4 voxelShape(vec3 p,float footprint);
 float voxelBodyDepth(vec3 p,float footprint);
@@ -13,8 +16,17 @@ uniform float u_cloudType,u_highBase,u_highThickness,u_highCoverage,u_highAngle;
 int cloudLayer=0;
 float cloudSlant=1.;
 vec3 cloudRay=vec3(0,0,1);
+vec3 cloudScreenRight=vec3(1,0,0),cloudScreenUp=vec3(0,1,0);
 float cloudStep=0.;
-float farCloudWeight(float footprint){return u_opticsReady?smoothstep(.5,4.,footprint):0.;}
+// 0 = automatic (probes), 1 = resolved segment, 2 = statistical segment.
+// Production blends completed segment L/T, never extinction coefficients.
+int cloudRepresentation=0;
+float farCloudWeight(float footprint){
+    if(!u_opticsReady)return 0.;
+    if(cloudRepresentation==1)return 0.;
+    if(cloudRepresentation==2)return 1.;
+    return smoothstep(.35,2.,footprint);
+}
 float layerBase(){return cloudLayer==0?u_base:u_highBase;}
 float layerThickness(){return cloudLayer==0?u_thickness:u_highThickness;}
 // Independent of absolute altitude: the same morphology can be moved vertically.
@@ -52,28 +64,90 @@ vec2 cloudWeather(vec3 p,float footprint){
     if(cover>0.)cover=clamp(cover+(w.b-.5)*.7+(w.a-.5)*1.3,0.,1.);
     return vec2(cover,cloudTypeValue(w.g));
 }
-vec3 columnOptics(vec2 weather,float slant){
-    float scale=max(0.,u_density*u_thickness/3.8*slant);
-    vec3 uv=vec3(weather,clamp((log2(max(.03125,scale))+5.)/12.,0.,1.));
-    vec3 moments=texture(u_cloudOptics,(uv*31.+.5)/32.).rgb;
+vec4 materialOptics(float cut,float type,float scale){
+    vec3 uv=vec3(clamp(cut/.52,0.,1.),type,clamp((log2(max(.03125,scale))+5.)/12.,0.,1.));
+    vec4 moments=texture(u_cloudOptics,(uv*31.+.5)/32.);
     float thin=min(1.,scale/.03125);
-    return vec3(-log(max(1./255.,1.-moments.r))*thin,moments.g/max(1./255.,1.-moments.g)*scale,moments.b*thin);
+    return vec4(moments.r*thin,moments.g/max(1./255.,1.-moments.g)*scale,moments.b*thin,moments.a*thin);
+}
+vec4 farMoments=vec4(0);
+vec3 farAnchor=vec3(1e8);
+float farTop=1.,farFootprint=-1.,farSlant=-1.,farShape=64.;
+// 144 world-local subcolumns filter the nonlinear cluster and final T. The
+// conditional material table filters unresolved voxels, NOT their mean noise.
+// Cached along a ray, at half-footprint spacing; no extra GPU texture.
+void prepareFarColumns(vec3 p,float footprint){
+    vec3 column=normalize(p)*(Rg+u_base);
+    if(distance(column,farAnchor)<max(.25,footprint*.5)&&abs(footprint-farFootprint)<max(.01,footprint*.05)&&abs(cloudSlant-farSlant)<cloudSlant*.05)return;
+    farAnchor=column;farFootprint=footprint;farSlant=cloudSlant;farMoments=vec4(0);farTop=0.;
+    // Transport the camera footprint onto the local tangent plane. A world-Z
+    // / world-Y frame switch would rotate the filter abruptly near the poles.
+    // Rodrigues' shortest rotation has no longitude seam. The grazing stretch
+    // uses the same bounded slant as transport, continuously through tangency.
+    vec3 n=normalize(column),rotation=cross(-cloudRay,n);
+    float denominator=max(.001,1.-dot(cloudRay,n));
+    vec3 east=cloudScreenRight-cloudRay*dot(cloudRay,cloudScreenRight);
+    vec3 north=cloudScreenUp-cloudRay*dot(cloudRay,cloudScreenUp);
+    east+=cross(rotation,east)+cross(rotation,cross(rotation,east))/denominator;
+    north+=cross(rotation,north)+cross(rotation,cross(rotation,north))/denominator;
+    vec3 tangent=cloudRay-n*dot(n,cloudRay);
+    float stretch=(cloudSlant-1.)/max(1e-6,dot(tangent,tangent));
+    east+=tangent*dot(east,tangent)*stretch;north+=tangent*dot(north,tangent)*stretch;
+    // A 4x4 rule is a subset of the 12x12 rule (indices 1,4,7,10).
+    // Blend their final moments continuously over 4-12 km. At low orbit this
+    // needs only 16 subcolumns; quality never selects another weather field.
+    float detailed=smoothstep(4.,12.,footprint);
+    int grid=detailed<=0.?4:int(u_columnGrid);float count=float(grid*grid);
+    for(int y=0;y<grid;y++)for(int x=0;x<grid;x++){
+        float weight=detailed/count+(1.-detailed)*(grid==4||((x%3)==1&&(y%3)==1)?1./16.:0.);
+        vec2 offset=(vec2(x,y)+.5)/float(grid)-.5;
+        vec3 samplePoint=normalize(column+footprint*(east*offset.x+north*offset.y))*(Rg+u_base);
+        vec2 weather=cloudWeather(samplePoint,footprint);
+        float top=cloudTypeTop(weather.y);farTop+=top*weight;
+        if(weather.x<=0.)continue;
+        vec3 q=advect(samplePoint);
+        float cell=cellular(q+cloudWarp(q)+u_seed*.43,29.713,.04).r;
+        float threshold=mix(.76,.38,weather.x),cluster=smoothstep(threshold-.035,threshold+.085,cell);
+        float scale=u_density*u_thickness/3.8*cloudSlant*cluster*smoothstep(0.,.2,weather.x);
+        vec4 m=materialOptics((1.-weather.x)*.22+(1.-cluster)*.3,weather.y,scale);
+        farMoments+=vec4(m.r,m.g,m.b*m.r,m.a)*weight;
+    }
+    farMoments.b/=max(.0001,farMoments.r);
+    // Fit a positive conditional optical-depth distribution to BOTH E[tau]
+    // and E[T]. Exponentiating only the conditional mean over-darkens the
+    // unresolved light path (the same Jensen error as viewing transmission).
+    float area=max(.001,farMoments.a),mean=farMoments.g/area;
+    float target=-log(max(.00001,1.-farMoments.r/area));
+    float lo=.015625,hi=64.;
+    for(int i=0;i<10;i++){
+        float k=sqrt(lo*hi);
+        if(k*log(1.+mean/k)<target)lo=k;else hi=k;
+    }
+    farShape=sqrt(lo*hi);
 }
 float farCloudDensity(vec3 p,float footprint){
     if(u_coverage<=0.||u_density<=0.)return 0.;
-    vec2 weather=cloudWeather(p,footprint);
-    float top=cloudTypeTop(weather.y),h=(length(p)-Rg-u_base)/(u_thickness*top);
-    if(h<=0.||h>=1.||weather.x<=0.)return 0.;
+    prepareFarColumns(p,footprint);
+    float top=farTop,h=(length(p)-Rg-u_base)/(u_thickness*top);
+    if(h<=0.||h>=1.||farMoments.r<=0.)return 0.;
     // Unit-integral vertical volume profile. Its column extinction is the
     // preintegrated transmission of many resolved, correlated voxel columns.
     float profile=12.*h*(1.-h)*(1.-h);
-    return columnOptics(weather,cloudSlant).x*profile/(u_thickness*top*cloudSlant);
+    return -log(max(1./65536.,1.-farMoments.r))*profile/(u_thickness*top*cloudSlant);
 }
 float farCloudLightDepth(vec3 p,vec3 light,float footprint){
-    vec2 weather=cloudWeather(p,footprint);float top=cloudTypeTop(weather.y);
+    float top=farTop;
     float h=clamp((length(p)-Rg-u_base)/(u_thickness*top),0.,1.),mu=dot(normalize(p),light);
     float below=h*h*(6.-8.*h+3.*h*h);
-    return min(32.,columnOptics(weather,1./max(.05,abs(mu))).y*(mu>0.?1.-below:below));
+    // Match the resolved model's finite 1.5 km self-shadow domain. A full slab
+    // shadow here changed the illumination law just by zooming out.
+    float end=clamp(h+mu*1.5/(u_thickness*top),0.,1.);
+    float endBelow=end*end*(6.-8.*end+3.*end*end);
+    float fraction=abs(mu)>.005?abs(endBelow-below)/abs(mu):12.*h*(1.-h)*(1.-h)*1.5/(u_thickness*top);
+    // Condition on cloudy area before self-shadowing; clear subcolumns have
+    // already contributed their transmission to the viewing-ray mixture.
+    float conditionalDepth=farMoments.g/max(.02,farMoments.a)/max(1.,cloudSlant);
+    return min(32.,conditionalDepth*fraction);
 }
 float lowCloudDensity(vec3 p,float footprint,bool coarse){
     float h=(length(p)-Rg-u_base)/u_thickness;
@@ -85,7 +159,7 @@ float lowCloudDensity(vec3 p,float footprint,bool coarse){
     if(h>=1.)return 0.;
     float cover=clamp((w.r+u_coverage-1.)/max(.05,u_coverage),0.,1.);
     if(cover<=0.)return 0.;
-    cover=clamp(cover+(w.b-.5)*.7+(mix(w.a,.5,smoothstep(20.,90.,footprint))-.5)*1.3,0.,1.);
+    cover=clamp(cover+(w.b-.5)*.7+(w.a-.5)*1.3,0.,1.);
     if(cover<=0.)return 0.;
     // A vertically coherent mesoscale mask creates genuine sky windows. A
     // different random gap at every altitude still accumulates into overcast.
@@ -181,6 +255,6 @@ float cloudDensity(vec3 p,float footprint,bool coarse){
     if(cloudLayer==1)return highCloudDensity(p,footprint);
     float far=farCloudWeight(footprint);
     if(far>=1.)return farCloudDensity(p,footprint);
-    float near=lowCloudDensity(p,footprint,coarse);
-    return far<=0.?near:mix(near,farCloudDensity(p,footprint),far);
+    // The caller integrates each representation separately during transition.
+    return lowCloudDensity(p,footprint,coarse);
 }

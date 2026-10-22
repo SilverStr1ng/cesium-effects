@@ -1,5 +1,6 @@
 import type {CloudComparison,CloudMode} from '../effects/water-clouds/CloudComparison';
 import type {CloudParameters,CloudQuality,CloudView} from '../effects/global-clouds/config';
+import type {CloudDebugView} from '../effects/global-clouds/GlobalCloudEffect';
 
 export function mountCloudPanel(parent:HTMLElement,cloud:CloudComparison,onLightingPreset:(night:boolean)=>void){
   const panel=document.createElement('section');panel.className='cloud-panel';
@@ -12,6 +13,9 @@ export function mountCloudPanel(parent:HTMLElement,cloud:CloudComparison,onLight
     <div class="environment-views"><button data-cloud-view="below">云下</button><button data-cloud-view="inside">云中</button><button data-cloud-view="above">云上</button><button data-cloud-view="global">全球云系</button></div>
     <div id="cloud-controls"></div>
     <div id="cloud-layers">
+      <label class="environment-label" for="cloud-debug">主云诊断视图</label>
+      <select id="cloud-debug"><option value="off">正常渲染</option><option value="footprint">屏幕足迹 · km</option><option value="mip">实际体素 mip / 远景分支</option><option value="weather">天气覆盖参数</option><option value="density">最终等效消光 · km⁻¹</option><option value="optical-depth">有效光学深度 τ</option><option value="transmittance">视线透射 T</option><option value="column-coverage">远景云柱覆盖 P(T&lt;0.9)</option></select>
+      <p id="cloud-debug-note" class="environment-description"></p>
       <div class="environment-presets"><button data-cloud-view="between">两层之间</button><button data-cloud-view="high">卷云上方</button></div>
       <label class="environment-label" for="cloud-type">主云层云型</label>
       <select id="cloud-type"><option value="0">天气混合 · 层积云 / 积云</option><option value="1">层云 · 扁平低矮</option><option value="2">层积云 · 成片云团</option><option value="3">积云 · 垂直发展</option></select>
@@ -24,6 +28,9 @@ export function mountCloudPanel(parent:HTMLElement,cloud:CloudComparison,onLight
     <div class="environment-presets"><button id="cloud-pause">暂停风场</button><button id="cloud-reset">重置云层</button><button id="cloud-new-weather">更换天气</button></div>
     <p class="environment-description">风速驱动平流和形态演化；日月跟随 Cesium 时间。</p>`;
   parent.append(panel);
+  const debug=panel.querySelector<HTMLSelectElement>('#cloud-debug')!;
+  const debugNotes:Record<CloudDebugView,string>={off:'',footprint:'蓝→青→黄→红：log₂(1+足迹)/6，0–63 km；无主云区间为黑。',mip:'红=7.83 km 域 mip/7，绿=13.57 km 域 mip/7。纯蓝=未读取体素（远景或仅卷云）。',weather:'蓝→红：沿主云区间平均天气覆盖参数 0–1；不等于最终遮挡率。',density:'蓝→红：最终 −ln(T)/有效云段长度，按 log₂(1+ρ) 映射 0–9 km⁻¹；混合介质的等效消光。', 'optical-depth':'蓝→红：−ln(T)，0–16；两层合计。诊断关闭提前退出，成本高于正常渲染。',transmittance:'黑=不透光，白=完全透光；两层合计，在线性空间。','column-coverage':'灰度：远景子云柱中 T<0.9 的统计概率，0–1。'};
+  debug.onchange=()=>{const value=debug.value as CloudDebugView;cloud.setDebugView(value);panel.querySelector('#cloud-debug-note')!.textContent=debugNotes[value];};
   for(const [id,night] of [['cloud-day',false],['cloud-night',true]] as const)
     panel.querySelector<HTMLButtonElement>(`#${id}`)!.onclick=()=>{
       cloud.reset();if(night)cloud.updateParameters({coverage:.78});cloud.setPaused(true);cloud.setEnabled(true);

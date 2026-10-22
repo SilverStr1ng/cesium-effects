@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {cloudSegments,weatherAt,createWeather,WEATHER_WIDTH,WEATHER_HEIGHT} from '../src/effects/global-clouds/WeatherField.ts';
+import {cloudSegments,weatherAt,weatherSystemsAt,createWeather,WEATHER_WIDTH,WEATHER_HEIGHT} from '../src/effects/global-clouds/WeatherField.ts';
 import {PLANET_RADIUS as R} from '../src/effects/hillaire-atmosphere/atmosphereMath.ts';
 import {volumeMipChain} from '../src/effects/global-clouds/CumulusNoise.ts';
 
@@ -53,4 +53,21 @@ test('volume mip levels preserve a constant field and integrate alternating texe
   const alternating=Uint8Array.from({length:8**3*4},(_,i)=>Math.floor(i/4)%2?200:20);
   for(const level of volumeMipChain(alternating,8))assert.ok(level.every(value=>value===110));
   assert.throws(()=>volumeMipChain(new Uint8Array(3**3*4),3));
+});
+
+test('spherical weather contains connected regimes and clear regions without latitude discontinuities',()=>{
+  const maxima={front:0,vortex:0,convection:0,stratus:0};let clear=0,cloudy=0;
+  for(let i=0;i<4096;i++){
+    const z=1-2*(i+.5)/4096,lat=Math.asin(z),lon=i*2.399963229728653;
+    const masks=weatherSystemsAt(lon,lat,13),w=weatherAt(lon,lat,13),near=weatherAt(lon+1e-6,lat+1e-6,13);
+    for(const key of Object.keys(maxima) as (keyof typeof maxima)[])maxima[key]=Math.max(maxima[key],masks[key]);
+    clear+=Number(w[0]<.25);cloudy+=Number(w[0]>.75);
+    w.forEach((v,c)=>assert.ok(Math.abs(v-near[c])<.001,'continuous world position'));
+  }
+  for(const [regime,maximum] of Object.entries(maxima))assert.ok(maximum>.75,`${regime} must have a populated region`);
+  assert.ok(clear>100&&cloudy>100,`clear ${clear}, cloudy ${cloudy}`);
+  for(const lat of [-Math.PI/2,0,Math.PI/2]){
+    const a=Object.values(weatherSystemsAt(-Math.PI,lat,13)),b=Object.values(weatherSystemsAt(Math.PI,lat,13));
+    a.forEach((v,i)=>assert.ok(Math.abs(v-b[i])<1e-12));
+  }
 });
