@@ -8,6 +8,7 @@ import multiple from './shaders/multiple-scattering.glsl?raw';
 import integrate from './shaders/integrate.glsl?raw';
 import sky from './shaders/sky-view.glsl?raw';
 import composite from './shaders/composite.glsl?raw';
+import display from '../../scene/display.glsl?raw';
 import {celestialPositions,angularRadius,illuminatedFraction} from './CelestialLighting';
 
 export class AtmosphereEffect implements SceneEffect {
@@ -56,7 +57,7 @@ export class AtmosphereEffect implements SceneEffect {
     const transport={...uniforms,u_transmittance:()=>this.transmittance!.texture,u_multiple:()=>this.multiple!.texture,u_sun:()=>this.sunDirection};
     const view={...transport,u_camera:()=>this.camera,u_basis:()=>this.basis};
     this.sky=new GpuLut(s,192,108,common+integrate+sky,view);
-    this.stage=new PostProcessStage({name:this.id,fragmentShader:common+integrate+composite,
+    this.stage=new PostProcessStage({name:this.id,fragmentShader:common+display+integrate+composite,
       uniforms:{...view,u_skyView:()=>this.sky!.texture,u_exposure:()=>this.parameters.exposure,
         u_sunRadius:()=>this.sunRadius*this.parameters.sunScale,u_moon:()=>this.moonDirection,
         u_moonRadius:()=>this.moonRadius*this.parameters.moonScale,u_moonBrightness:()=>this.parameters.moonBrightness}});

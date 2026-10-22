@@ -1,5 +1,6 @@
 import density from '../src/effects/global-clouds/shaders/density.glsl?raw';
 import radiometry from '../src/effects/global-clouds/shaders/radiometry.glsl?raw';
+import display from '../src/scene/display.glsl?raw';
 import {createCumulusNoise,CUMULUS_NOISE_SIZE as NOISE_SIZE} from '../src/effects/global-clouds/CumulusNoise';
 import {createWeather,WEATHER_WIDTH,WEATHER_HEIGHT} from '../src/effects/global-clouds/WeatherField';
 import common from '../src/effects/hillaire-atmosphere/shaders/common.glsl?raw';
@@ -37,10 +38,21 @@ try{
   const local=run(common+density,`void main(){float i=mod(floor(gl_FragCoord.x),256.);vec3 p=vec3(i*.13-6000.,sin(i*2.1)*70.,cos(i*.7)*50.);if(gl_FragCoord.x>256.)p.x+=12.;out_FragColor=vec4(vec3(shapeNoise(p)*.5+.5),1);}`);
   let localDiff=0;for(let i=0;i<256;i++)localDiff+=((local[i*4]-local[(i+256)*4])/255)**2;
   const localRms=Math.sqrt(localDiff/256);
-  const light=run(radiometry,`void main(){vec3 mixed=.5*cloudSource(vec3(0))+.5*cloudSource(vec3(2));out_FragColor=vec4(cloudDisplay(mixed),1);}`);
-  const expected=1-Math.exp(-1.25),error=Math.abs(light[0]/255-expected);
-  const vacuum=run(radiometry,`void main(){float v=(gl_FragCoord.x-.5)/511.;out_FragColor=vec4(cloudDisplay(cloudBackground(vec3(v))),1);}`);
+  const light=run(display+radiometry,`void main(){vec3 mixed=.5*cloudSource(vec3(0))+.5*cloudSource(vec3(2));out_FragColor=vec4(cloudDisplay(mixed),1);}`);
+  const x=1.25,expected=((x*(2.51*x+.03))/(x*(2.43*x+.59)+.14))**(1/2.2),error=Math.abs(light[0]/255-expected);
+  const vacuum=run(display+radiometry,`void main(){float v=(gl_FragCoord.x-.5)/511.;out_FragColor=vec4(cloudDisplay(cloudBackground(vec3(v))),1);}`);
   let backgroundError=0;for(let i=0;i<512;i++)backgroundError=Math.max(backgroundError,Math.abs(vacuum[i*4]/255-i/511));
+  // Ground endpoints must survive world -> scaled atmosphere conversion, even
+  // from orbit. The old unscaled distance was off by tens of kilometres.
+  const endpoints=run(common,`void main(){
+    float i=floor(gl_FragCoord.x),latitude=mix(-1.55,1.55,i/511.);
+    vec3 scale=vec3(1,1,1.00336409),up=vec3(cos(latitude)*.8,cos(latitude)*.6,sin(latitude));
+    vec3 target=up*Rg/scale,origin=target+normalize(up+vec3(.2,-.1,.04))*mix(.8,17000.,mod(i,32.)/31.);
+    vec3 worldRay=normalize(target-origin),delta=target-origin;
+    vec3 endpoint=origin*scale+normalize(worldRay*scale)*atmosphereRayDistance(worldRay,length(delta)*1000.);
+    out_FragColor=vec4(length(endpoint-target*scale)/.02,0,0,1);
+  }`);
+  let endpointError=0;for(let i=0;i<512;i++)endpointError=Math.max(endpointError,endpoints[i*4]/255*.02);
   const densityFixture=`void main(){float i=floor(gl_FragCoord.x);vec3 n=normalize(vec3(-.106,-.808,.580));vec3 east=normalize(cross(vec3(0,0,1),n));vec3 p=n*(Rg+1.8+mod(i,16.)*.12)+east*(floor(i/16.)*.28);float rho=cloudDensity(p,.01,false),bound=cloudDensity(p,.01,true);out_FragColor=vec4(rho/8.,bound/8.,0,1);}`;
   const body=run(common+density,densityFixture);
   const evolved=run(common+density,densityFixture,{u_evolution:6});
@@ -61,6 +73,7 @@ try{
     {name:'12 km displacement must not repeat local cloud lobes',pass:localRms>.035,rms:localRms},
     {name:'integrate heterogeneous radiance before the display transform',pass:error<.008,actual:light[0]/255,expected,error},
     {name:'zero cloud coverage preserves the preceding background',pass:backgroundError<.005,error:backgroundError},
+    {name:'scaled atmosphere depth reaches the same surface from ground to orbit',pass:endpointError<.01,maxErrorKm:endpointError},
     {name:'erosion never adds density above the base field',pass:boundViolation<=1/255,error:boundViolation},
     {name:'water cloud fixture contains optically thick cores (200 m optical depth > 1)',pass:thickCores>16,count:thickCores},
     {name:'wind evolution deforms the field even with bulk advection frozen',pass:evolutionRms>.04,rms:evolutionRms},

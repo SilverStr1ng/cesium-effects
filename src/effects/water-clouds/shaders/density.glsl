@@ -31,26 +31,31 @@ float cloudDensity(vec3 p,float footprint,bool coarse){
     vec3 offset=vec3(u_seed*.71,u_seed*.37,u_seed*.53);
     float local=waterNoise(column+offset,83.1,footprint).a*.7+
         waterNoise(rotateWeather(column)-offset,47.7,footprint).a*.3;
-    float mass=clamp(.5+(local-.5)*2.9+(weather.r-.5)*.8+(weather.b-.5)*.45,0.,1.);
+    float mass=clamp(.35+(local-.5)*2.9+(weather.r-.5)*.8+(weather.b-.5)*.45,0.,1.);
     vec3 east=normalize(abs(up.z)>.9999?vec3(1,0,0):vec3(-up.y,up.x,0));
     vec3 shape=q-east*(h*u_thickness*clamp(u_windSpeed/150.,0.,1.)*.35)+east*u_evolution;
-    vec4 base=waterNoise(shape+offset,9.37,footprint);
-    // Small lobes perturb a weather-defined top, rather than building the entire
-    // cloud from isolated equal-sized balls. Low columns also lose their floor.
-    float dilation=dot(base.rgb-vec3(.5),vec3(1.05,.52,.24));
-    dilation+=(waterNoise(rotateWeather(shape)+offset,3.83,footprint).r-.5)*.32;
-    float top=mass+(u_coverage-.65)*1.35+dilation*(u_coverage+.2)-.12;
-    float floorHeight=.025+pow(1.-mass,2.)*.32;
-    float edge=.012*exp(-h*.6)+min(.05,footprint*.12);
+    vec4 base=waterNoise(shape+offset,7.5,footprint);
+    // Weather defines a column, positive cellular dilation builds its lobes.
+    // Sparse weather removes the lower column rather than raising a hard slab.
+    float dilation=dot(base.rgb,vec3(.70,.41,.23))*.69;
+    float top=clamp(mass+u_coverage-1.+dilation*u_coverage,0.,1.);
+    float support=smoothstep(0.,.08,top),floorHeight=0.;
+    // Resolve a physical transition layer before considering pixel filtering.
+    // A narrow threshold made this height field look like a solid isosurface.
+    float edge=.055+min(.04,footprint*.12);
     if(top+edge<h||floorHeight-edge>h)return macroDensity*distant;
     if(!coarse){
-        float localHeight=clamp((h-floorHeight)/max(.08,top-floorHeight),0.,1.);
-        vec3 fine=waterNoise(rotateWeather(shape)-east*u_evolution*.6+offset,1.29,footprint).rgb;
-        float carve=dot(mix(1.-fine,fine,.22),vec3(.57,.29,.14));
-        float erosion=carve*u_detail*mix(.08,.65,localHeight*localHeight);
-        top-=erosion;floorHeight+=carve*u_detail*.09;
+        float localHeight=clamp(h/max(.001,top),0.,1.);
+        vec3 fine=waterNoise(rotateWeather(shape)-east*u_evolution*.6+offset,.975,footprint).rgb;
+        float carve=dot(fine,vec3(.113,.04,.02));
+        float erosion=carve*(u_detail/.55)*mix(.24,2.15,localHeight)*u_coverage;
+        top-=erosion;floorHeight=erosion;
     }
-    float body=smoothstep(-edge,edge,top-h)*smoothstep(-edge,edge,h-floorHeight);
+    float body=smoothstep(-edge,edge,top-h)*smoothstep(0.,edge,h-floorHeight);
+    float requiredWeather=(1.-smoothstep(0.,.13,h))*.54;
+    body*=support*smoothstep(requiredWeather-.1,requiredWeather,mass);
     body*=smoothstep(0.,.025,h)*(1.-smoothstep(.94,1.,h));
-    return mix(body*6.*u_density,macroDensity,distant);
+    // Extinction in km^-1. Dense cores remain opaque; the soft boundaries carry
+    // the optically thin detail instead of lowering opacity over the whole cloud.
+    return mix(body*16.*u_density,macroDensity,distant);
 }

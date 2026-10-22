@@ -7,7 +7,7 @@ export function mountCloudPanel(parent:HTMLElement,cloud:CloudComparison,onLight
     <label class="environment-label" for="cloud-model">云层实现 · A/B 对比</label>
     <select id="cloud-model"><option value="water" selected>自然水云 · Sky Pro 方法参考</option><option value="cellular">原版 · 胞状体积云</option></select>
     <p id="cloud-model-note" class="environment-description">天气云顶 · 细节侵蚀 · 日月体积散射。切换保留视角、时间和参数。</p>
-    <div class="environment-presets"><button id="cloud-day" title="恢复白昼默认天气和机位，暂停时间与风场">白昼对比</button><button id="cloud-night" title="加载满月、85% 云量和向月机位，暂停时间与风场">月夜对比</button></div>
+    <div class="environment-presets"><button id="cloud-day" title="恢复白昼默认天气和机位，暂停时间与风场">白昼对比</button><button id="cloud-night" title="加载满月、78% 云量和向月机位，暂停时间与风场">月夜对比</button></div>
     <div id="cloud-moon-control" class="control"><div class="control-label"><label for="cloud-moon-light">月光照云</label><span><output id="cloud-moon-value">1</output> ×</span></div><input id="cloud-moon-light" type="range" min="0" max="4" step="0.1" value="1"></div>
     <div class="environment-views"><button data-cloud-view="below">云下</button><button data-cloud-view="inside">云中</button><button data-cloud-view="above">云上</button><button data-cloud-view="global">全球云系</button></div>
     <div id="cloud-controls"></div>
@@ -18,7 +18,7 @@ export function mountCloudPanel(parent:HTMLElement,cloud:CloudComparison,onLight
   parent.append(panel);
   for(const [id,night] of [['cloud-day',false],['cloud-night',true]] as const)
     panel.querySelector<HTMLButtonElement>(`#${id}`)!.onclick=()=>{
-      cloud.reset();if(night)cloud.updateParameters({coverage:.85});cloud.setPaused(true);cloud.setEnabled(true);
+      cloud.reset();if(night)cloud.updateParameters({coverage:.78});cloud.setPaused(true);cloud.setEnabled(true);
       panel.querySelector<HTMLInputElement>('#cloud-enabled')!.checked=true;
       pause.textContent='继续风场';seed.value=String(cloud.parameters.seed);syncs.forEach(sync=>sync());
       onLightingPreset(night);

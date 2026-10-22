@@ -2,6 +2,11 @@ const float PI=3.14159265359;
 const float Rg=6378.137;
 const float Rt=6478.137;
 uniform vec3 u_medium;
+// Convert a world-depth distance to the normalized ray metric of the scaled
+// WGS84 atmosphere. Omitting the directional scale loses kilometres at orbit.
+float atmosphereRayDistance(vec3 worldDirection,float metres){
+    return metres*.001*length(worldDirection*vec3(1,1,1.00336409));
+}
 vec2 sphere(vec3 p,vec3 d,float r){
     float b=dot(p,d),c=dot(p,p)-r*r,h=b*b-c;
     if(h<0.)return vec2(1e9,-1e9);

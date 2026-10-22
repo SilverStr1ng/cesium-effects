@@ -52,7 +52,7 @@ void main(){
     vec4 eye=czm_inverseProjection*vec4(v_textureCoordinates*2.-1.,1,1);
     vec3 wc=mat3(czm_inverseView)*normalize(eye.xyz),scaled=wc*vec3(1,1,1.00336409),d=normalize(scaled);
     float maximum=1e8,depth=sceneDepth(v_textureCoordinates);
-    if(depth>0.&&depth<1.){vec4 hit=czm_windowToEyeCoordinates(v_textureCoordinates*czm_viewport.zw+czm_viewport.xy,depth);maximum=length(hit.xyz/hit.w)*.001*length(scaled);}
+    if(depth>0.&&depth<1.){vec4 hit=czm_windowToEyeCoordinates(v_textureCoordinates*czm_viewport.zw+czm_viewport.xy,depth);maximum=atmosphereRayDistance(wc,length(hit.xyz/hit.w));}
     vec2 ground=sphere(u_camera,d,Rg);
     if(ground.x>0.)maximum=min(maximum,ground.x);
     vec2 outer=sphere(u_camera,d,Rg+u_base+u_thickness);outer=vec2(max(0.,outer.x),min(maximum,outer.y));
@@ -66,6 +66,6 @@ void main(){
         vec3 airL,airT;integrateAtmosphere(u_camera,d,weightedDistance/acc.a,12,airL,airT);
         acc.rgb=acc.rgb*airT+airL*acc.a;
     }
-    // RGBA8 stores encoded linear radiance. Decode each texel before filtering.
-    out_FragColor=vec4(encodeL(acc.rgb),acc.a);
+    // Linear half-float where supported; encoded RGBA8 is the portable fallback.
+    out_FragColor=vec4(storeCloudRadiance(acc.rgb),acc.a);
 }

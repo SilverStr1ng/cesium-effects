@@ -39,13 +39,14 @@ try{
     const error=gl.getError();if(error!==gl.NO_ERROR)throw new Error(`WebGL draw failed: ${error}`);
     gl.deleteProgram(program);gl.deleteShader(fragment);return bytes;
   }
-  const densityFixture=`void main(){float i=floor(gl_FragCoord.x);vec3 n=normalize(${anchorGLSL});vec3 east=normalize(cross(vec3(0,0,1),n));vec3 p=n*(Rg+1.8+mod(i,16.)*.12)+east*(floor(i/16.)*.9);float rho=cloudDensity(p,.01,false),bound=cloudDensity(p,.01,true);out_FragColor=vec4(rho/8.,bound/8.,0,1);}`;
+  const densityFixture=`void main(){float i=floor(gl_FragCoord.x);vec3 n=normalize(${anchorGLSL});vec3 east=normalize(cross(vec3(0,0,1),n));vec3 p=n*(Rg+1.8+mod(i,16.)*.12)+east*(floor(i/16.)*.9);float rho=cloudDensity(p,.01,false),bound=cloudDensity(p,.01,true);out_FragColor=vec4(rho/32.,bound/32.,0,1);}`;
   const body=run(common+density,densityFixture);
   const evolved=run(common+density,densityFixture,{u_evolution:6});
   let evolutionDiff=0;for(let i=0;i<512;i++)evolutionDiff+=((body[i*4]-evolved[i*4])/255)**2;
   const evolutionRms=Math.sqrt(evolutionDiff/512);
   const groundSky=run(common+density,`void main(){
-    float i=floor(gl_FragCoord.x),az=radians(245.+(mod(i,32.)-16.)*2.75),elevation=radians(20.+floor(i/32.)*2.3);
+    // Include the actual 12-degree ground camera's horizon-facing sky.
+    float i=floor(gl_FragCoord.x),az=radians(245.+(mod(i,32.)-16.)*2.75),elevation=radians(5.+floor(i/32.)*2.3);
     vec3 up=normalize(${anchorGLSL}),east=normalize(cross(vec3(0,0,1),up)),north=cross(up,east);
     vec3 origin=up*(Rg+.8),ray=(north*cos(az)+east*sin(az))*cos(elevation)+up*sin(elevation);
     float start=sphere(origin,ray,Rg+u_base).y,end=sphere(origin,ray,Rg+u_base+u_thickness).y,ds=(end-start)/160.,tau=0.;
@@ -53,8 +54,13 @@ try{
     out_FragColor=vec4(exp(-tau),0,0,1);
   }`,{u_coverage:.62});
   let clearRays=0,cloudyRays=0;for(let i=0;i<512;i++){if(groundSky[i*4]>128)clearRays++;if(groundSky[i*4]<26)cloudyRays++;}
-  let boundViolation=0,thickCores=0;
-  for(let i=0;i<512;i++){boundViolation=Math.max(boundViolation,(body[i*4]-body[i*4+1])/255);if(body[i*4]/255*8>5)thickCores++;}
+  let boundViolation=0,thickCores=0,thinEdges=0;
+  for(let i=0;i<512;i++){
+    boundViolation=Math.max(boundViolation,(body[i*4]-body[i*4+1])/255);
+    const rho=body[i*4]/255*32;
+    if(rho>5)thickCores++;
+    if(rho>.125&&rho<4)thinEdges++;
+  }
   const noCloud=run(common+density,densityFixture,{u_coverage:0});
   const lightSource=common+transport+density+`
 #define LIGHT_STEPS 7
@@ -82,10 +88,17 @@ try{
     float cloudDensity(vec3 p,float footprint,bool coarse){return u_density;}`+lighting;
   const shadowFixture=`void main(){vec3 p=vec3(0,0,Rg+2.);float e=waterScatter(waterPhases(.3),waterLightDepth(p,vec3(0,0,1),u_density,.01));out_FragColor=vec4(vec3(e*5.),1);}`;
   const thin=average(run(analytic,shadowFixture,{u_density:.05})),thick=average(run(analytic,shadowFixture,{u_density:2}));
+  // A uniform medium has an exact optical depth. Changing quality must change
+  // quadrature precision, never the length or strength of the light shadow.
+  const coneErrors=[3,5,7].map(steps=>{
+    const source=analytic.replace('#define LIGHT_STEPS 7',`#define LIGHT_STEPS ${steps}`);
+    const measured=average(run(source,`void main(){float tau=waterLightDepth(vec3(0,0,Rg+2.),vec3(0,0,1),.5,.01);out_FragColor=vec4(vec3(tau),1);}`,{u_density:.5}));
+    return Math.abs(measured-.5*.6);
+  });
   const repeatRms=(distance:number)=>{
     const bytes=run(common+density,`void main(){float i=mod(floor(gl_FragCoord.x),256.);vec3 up=normalize(${anchorGLSL}),east=normalize(cross(vec3(0,0,1),up));
       float offset=i*1.37-160.+(gl_FragCoord.x>256.?${distance.toFixed(1)}:0.);
-      vec3 p=normalize(up*Rg+east*offset)*(Rg+2.2);out_FragColor=vec4(vec3(cloudDensity(p,.02,false)/8.),1);}`);
+      vec3 p=normalize(up*Rg+east*offset)*(Rg+2.2);out_FragColor=vec4(vec3(cloudDensity(p,.02,false)/32.),1);}`);
     let sum=0;for(let i=0;i<256;i++)sum+=((bytes[i*4]-bytes[(i+256)*4])/255)**2;
     return Math.sqrt(sum/256);
   };
@@ -101,12 +114,14 @@ try{
     {name:'zero coverage gives zero density',pass:average(noCloud)===0},
     {name:'erosion remains bounded by the un-eroded medium',pass:boundViolation<=1/255,error:boundViolation},
     {name:'water medium contains opaque cores',pass:thickCores>16,count:thickCores},
+    {name:'water medium preserves optically thin transition samples',pass:thinEdges>16,count:thinEdges},
     {name:'wind changes internal shape independently of advection',pass:evolutionRms>.025,rms:evolutionRms},
     {name:'ground fixture has both open sky and opaque clouds',pass:clearRays>25&&cloudyRays>25,clearRays,cloudyRays},
     {name:'full moon adds directional cloud radiance',pass:delta>.01,delta},
     {name:'new moon removes direct lunar lighting',pass:Math.abs(average(newMoon)-average(dark))<.002},
     {name:'moon below horizon cannot light the cloud fixture',pass:Math.abs(average(below)-average(dark))<.002},
-    {name:'cloud optical depth attenuates directional light',pass:thick<thin*.5,thin,thick}
+    {name:'cloud optical depth attenuates directional light',pass:thick<thin*.5,thin,thick},
+    {name:'local cone integrates the same physical shadow at all qualities',pass:coneErrors.every(x=>x<.005),errors:coneErrors}
   ];
   gl.deleteTexture(weather);gl.deleteTexture(noise);gl.deleteShader(vertex);
   output.textContent=JSON.stringify({passed:checks.every(x=>x.pass),checks},null,2);

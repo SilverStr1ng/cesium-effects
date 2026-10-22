@@ -14,10 +14,13 @@ void main(){
     vec4 eye=czm_inverseProjection*vec4(v_textureCoordinates*2.-1.,1,1);
     // Do not divide by w: at an effectively infinite far plane it may round to zero.
     vec3 dirWC=mat3(czm_inverseView)*normalize(eye.xyz);
-    vec3 direction=normalize(dirWC*vec3(1,1,1.00336409));
+    vec3 scaledDirection=dirWC*vec3(1,1,1.00336409),direction=normalize(scaledDirection);
     float depth=texture(depthTexture,v_textureCoordinates).r,maximum=1e7;
     bool surface=depth>0.&&depth<1.;
-    if(surface){vec4 hit=czm_windowToEyeCoordinates(v_textureCoordinates*czm_viewport.zw+czm_viewport.xy,depth);maximum=length(hit.xyz/hit.w)*.001;}
+    // Camera/rays use the ellipsoid-scaled atmosphere sphere. The world-space
+    // depth must use that same ray metric; at orbit the omitted factor truncates
+    // tens of kilometres of air and reveals the globe's tile tessellation.
+    if(surface){vec4 hit=czm_windowToEyeCoordinates(v_textureCoordinates*czm_viewport.zw+czm_viewport.xy,depth);maximum=atmosphereRayDistance(dirWC,length(hit.xyz/hit.w));}
     vec3 L,T;
     if(!surface&&length(u_camera)<Rt-1.){
         vec3 local=transpose(u_basis)*direction;
@@ -26,12 +29,12 @@ void main(){
         L=decodeL(texture(u_skyView,(uv*vec2(191,107)+.5)/vec2(192,108)).rgb);
         T=sunTransmission(u_transmittance,u_camera,direction);
     }else integrateAtmosphere(u_camera,direction,maximum,24,L,T);
-    vec3 sky=1.-exp(-L*u_exposure);
+    vec3 sky=L;
     if(!surface){
         float angle=acos(clamp(dot(direction,u_sun),-1.,1.));
         float disk=1.-smoothstep(u_sunRadius*.96,u_sunRadius*1.04,angle);
         float halo=exp(-angle/max(.001,u_sunRadius)*.75)*.32;
-        sky+=(disk*2.+halo)*sunTransmission(u_transmittance,u_camera,u_sun)*vec3(1.,.94,.83);
+        sky+=(disk*8.+halo*.12)*sunTransmission(u_transmittance,u_camera,u_sun)*vec3(1.,.94,.83);
         // A lit sphere projected onto the Moon's apparent disc gives the lunar phase.
         float moonCos=dot(direction,u_moon);
         if(moonCos>cos(u_moonRadius*1.05)){
@@ -44,12 +47,13 @@ void main(){
             float maria=.82+.08*sin(uv.x*17.+sin(uv.y*23.))+.06*sin(uv.y*29.+uv.x*11.);
             // Display adaptation is applied to lunar radiance as well as the sky.
             // Preserve the terminator/phase, with only a small earthshine floor.
-            vec3 moonRadiance=vec3(.91,.94,1.)*(.0015+lit*.14)*maria*sunTransmission(u_transmittance,u_camera,direction);
-            vec3 moon=1.-exp(-moonRadiance*u_exposure*u_moonBrightness);
+            vec3 moonRadiance=vec3(.91,.94,1.)*(.0006+lit*.06)*maria*sunTransmission(u_transmittance,u_camera,direction);
+            vec3 moon=moonRadiance*u_moonBrightness;
             sky=mix(sky,sky+moon,1.-smoothstep(.94,1.04,rr));
         }
         // Leave stars/space visible only where atmospheric extinction is weak.
         float night=1.-smoothstep(-.15,.05,dot(normalize(u_camera),u_sun));
-        out_FragColor=vec4(clamp(sky+background.rgb*T*mix(.005,.75,night),0.,1.),1);
-    }else out_FragColor=vec4(clamp(background.rgb*T+sky,0.,1.),1);
+        sky+=recoverRadiance(background.rgb,u_exposure)*T*mix(.005,.75,night);
+    }else sky+=recoverRadiance(background.rgb,u_exposure)*T;
+    out_FragColor=vec4(displayRadiance(sky,u_exposure),1);
 }

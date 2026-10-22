@@ -1,4 +1,4 @@
-import {Cartesian3,Math as CesiumMath,Matrix4,PostProcessStage,PostProcessStageComposite,PostProcessStageSampleMode} from 'cesium';
+import {Cartesian3,Math as CesiumMath,Matrix4,PixelDatatype,PostProcessStage,PostProcessStageComposite,PostProcessStageSampleMode} from 'cesium';
 import type {EffectContext,SceneEffect} from '../types';
 import {cloudDefaults,cloudQualities,type CloudParameters,type CloudQuality} from './config';
 import {createWeather,WEATHER_WIDTH,WEATHER_HEIGHT} from './WeatherField';
@@ -10,6 +10,8 @@ import march from './shaders/march.glsl?raw';
 import lighting from './shaders/lighting.glsl?raw';
 import resolve from './shaders/resolve.glsl?raw';
 import radiometry from './shaders/radiometry.glsl?raw';
+import storage from './shaders/storage.glsl?raw';
+import display from '../../scene/display.glsl?raw';
 import atmosphereCommon from '../hillaire-atmosphere/shaders/common.glsl?raw';
 import atmosphereTransport from '../hillaire-atmosphere/shaders/integrate.glsl?raw';
 
@@ -46,6 +48,8 @@ export class GlobalCloudEffect implements SceneEffect {
   private evolution=0;
   private lastTime=0;
   private pixelAngle=.001;
+  private preferHdr=true;
+  renderTargetMode:'RGBA16F'|'RGBA8'='RGBA8';
   private removeUpdate?:()=>void;
   constructor(private light?:CloudLighting,private model:CloudModel={id:'global-clouds',density,lighting}){this.id=model.id;}
   get motion(){return {angle:this.windAngle,evolution:this.evolution};}
@@ -80,8 +84,13 @@ export class GlobalCloudEffect implements SceneEffect {
     if(!this.context)return;const stages=this.context.viewer.scene.postProcessStages;
     if(this.stage)stages.remove(this.stage);
     const quality=cloudQualities[this.quality];
+    const {context}=this.context.viewer.scene as unknown as {context:{colorBufferHalfFloat:boolean;halfFloatingPointTexture:boolean;textureHalfFloatLinear:boolean}};
+    const hdr=this.preferHdr&&context.colorBufferHalfFloat&&context.halfFloatingPointTexture&&context.textureHalfFloatLinear;
+    this.renderTargetMode=hdr?'RGBA16F':'RGBA8';
+    const outputSource=(hdr?'#define CLOUD_HDR\n':'')+atmosphereCommon+display+storage+radiometry;
     const volume=new PostProcessStage({name:`${this.id}-volume`,textureScale:quality.scale,
-      fragmentShader:`#define CLOUD_STEPS ${quality.steps}\n#define LIGHT_STEPS ${quality.lightSteps}\n#define CLOUD_SUBSTEPS ${quality.substeps}\n`+(this.model.defines??'')+atmosphereCommon+atmosphereTransport+this.model.density+radiometry+
+      pixelDatatype:hdr?PixelDatatype.HALF_FLOAT:PixelDatatype.UNSIGNED_BYTE,
+      fragmentShader:`#define CLOUD_STEPS ${quality.steps}\n#define LIGHT_STEPS ${quality.lightSteps}\n#define CLOUD_SUBSTEPS ${quality.substeps}\n`+(this.model.defines??'')+outputSource+atmosphereTransport+this.model.density+
         `uniform sampler2D depthTexture;uniform bool u_atmosphere;uniform vec3 u_camera,u_moon;
         uniform float u_pixelAngle,u_moonFraction,u_moonGain;struct CloudPhases {vec3 sun;vec3 moon;vec3 sky;vec3 horizon;};`+
         this.model.lighting+march,
@@ -91,7 +100,7 @@ export class GlobalCloudEffect implements SceneEffect {
         u_exposure:()=>this.light?.exposure?.()??8,
         u_moon:()=>this.light?.moonDirection()??Cartesian3.UNIT_Z,u_moonFraction:()=>this.light?.moonFraction()??0,u_moonGain:()=>this.moonLight,
         u_transmittance:()=>this.light?.transmittance()??this.weather!,u_atmosphere:()=>Boolean(this.light?.atmosphereEnabled()&&this.light.transmittance()&&this.light.multipleScattering?.())}});
-    const output=new PostProcessStage({name:`${this.id}-resolve`,fragmentShader:atmosphereCommon+radiometry+resolve,uniforms:{u_clouds:volume.name,u_exposure:()=>this.light?.exposure?.()??8}});
+    const output=new PostProcessStage({name:`${this.id}-resolve`,fragmentShader:outputSource+resolve,uniforms:{u_clouds:volume.name,u_exposure:()=>this.light?.exposure?.()??8}});
     this.stage=new PostProcessStageComposite({name:this.id,stages:[volume,output],inputPreviousStageTexture:false});
     this.stage.enabled=this.enabled;stages.add(this.stage);
   }
@@ -102,6 +111,8 @@ export class GlobalCloudEffect implements SceneEffect {
     if(v.seed!==seed&&this.weather)this.weather.copyFrom({source:{width:WEATHER_WIDTH,height:WEATHER_HEIGHT,arrayBufferView:createWeather(v.seed)}});
   }
   setQuality(value:CloudQuality){if(this.quality===value)return;this.quality=value;this.buildStage();}
+  /** Also provides a deterministic fallback path for unsupported float targets. */
+  setHdrEnabled(value:boolean){if(value===this.preferHdr)return;this.preferHdr=value;this.buildStage();}
   setEnabled(value:boolean){this.enabled=value;if(this.stage)this.stage.enabled=value;}
   setPaused(value:boolean){this.paused=value;}
   reset(){this.windAngle=0;this.evolution=0;this.updateParameters(cloudDefaults);}

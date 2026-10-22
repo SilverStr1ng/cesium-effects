@@ -24,6 +24,7 @@ try{
     moonFraction:()=>atmosphere.moonFraction,transmittance:()=>atmosphere.transmissionTexture,atmosphereEnabled:()=>atmosphere.enabled,
     multipleScattering:()=>atmosphere.multipleScatteringTexture,medium:()=>atmosphere.mediumParameters,exposure:()=>atmosphere.parameters.exposure});
   clouds.mount({viewer,onStatus:console.info});clouds.setPaused(true);
+  if(query.get('storage')==='rgba8')clouds.setHdrEnabled(false);
   if(query.get('atmosphere')==='off')atmosphere.setEnabled(false);
   if(query.get('clouds')==='off')clouds.setEnabled(false);
   if(query.has('time'))viewer.clock.currentTime=JulianDate.fromIso8601(query.get('time')!);
@@ -37,8 +38,15 @@ try{
   viewer.camera.setView({destination:Cartesian3.fromDegrees(-97.52,35.46,height),
     orientation:{heading:CesiumMath.toRadians(view==='global'?0:245),pitch:CesiumMath.toRadians(pitch),roll:0}});
   if(view==='moon')viewer.camera.setView(cloudComparisonView(viewer.clock.currentTime,true));
-  const removeProfiler=attachFrameProfiler(viewer,()=>({clouds:{model,moonLight:clouds.moonLight,quality:clouds.quality,parameters:clouds.parameters},
+  const removeProfiler=attachFrameProfiler(viewer,()=>({clouds:{model,storage:clouds.renderTargetMode,moonLight:clouds.moonLight,quality:clouds.quality,parameters:clouds.parameters},
     camera:{position:Cartesian3.pack(viewer.camera.positionWC,[]),direction:Cartesian3.pack(viewer.camera.directionWC,[])}}));
-  status.textContent=`READY · ${model} · ${quality} · ${view} · ${JulianDate.toIso8601(viewer.clock.currentTime)} · seed 13`;
+  status.textContent=`READY · ${model} · ${quality} · ${view} · ${clouds.renderTargetMode} · ${JulianDate.toIso8601(viewer.clock.currentTime)} · seed 13`;
+  if(query.has('diagnostics')){
+    const remove=viewer.scene.postRender.addEventListener(()=>{
+      const up=Cartesian3.normalize(viewer.camera.positionWC,new Cartesian3());
+      status.textContent+=` · moon fraction ${atmosphere.moonFraction.toFixed(3)} · moon altitude ${CesiumMath.toDegrees(Math.asin(Cartesian3.dot(up,atmosphere.moonDirection))).toFixed(1)}° · sun altitude ${CesiumMath.toDegrees(Math.asin(Cartesian3.dot(up,atmosphere.sunDirection))).toFixed(1)}°`;
+      remove();
+    });
+  }
   window.addEventListener('pagehide',()=>{removeProfiler();clouds.destroy();atmosphere.destroy();viewer.destroy();},{once:true});
 }catch(error){status.textContent=String(error);console.error(error);}

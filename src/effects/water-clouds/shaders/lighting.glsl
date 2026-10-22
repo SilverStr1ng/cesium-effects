@@ -3,8 +3,8 @@ float waterPhase(float c,float g){return (1.-g*g)/(4.*PI*pow(max(.015,1.+g*g-2.*
 vec3 waterPhases(float c){
     vec3 result;float eccentricity=1.;
     for(int j=0;j<3;j++){
-        result[j]=mix(waterPhase(c,.76*eccentricity),waterPhase(c,-.24*eccentricity),.38);
-        eccentricity*=.56;
+        result[j]=mix(waterPhase(c,.8*eccentricity),waterPhase(c,-.2*eccentricity),.5);
+        eccentricity*=.5;
     }
     return result;
 }
@@ -22,20 +22,24 @@ CloudPhases scatteringPhases(vec3 d){
     return CloudPhases(waterPhases(dot(d,u_sun)),waterPhases(dot(d,u_moon)),sky,horizon);
 }
 float waterLightDepth(vec3 p,vec3 light,float rho,float footprint){
-    float end=min(18.,max(0.,sphere(p,light,Rg+u_base+u_thickness).y));
-    float tau=0.;
-    // Near samples resolve local lobes; subsequent intervals cover the cloud bank.
-    for(int j=0;j<LIGHT_STEPS;j++){
-        float a=float(j)/float(LIGHT_STEPS),b=float(j+1)/float(LIGHT_STEPS);
-        float t0=.035*(pow(1.+end/.035,a)-1.),t1=.035*(pow(1.+end/.035,b)-1.);
-        float t=(t0+t1)*.5;
-        float sampleDensity=cloudDensity(p+light*t,max(footprint,t*.012),false);
+    vec3 axis=abs(light.z)>.99?vec3(0,1,0):vec3(0,0,1);
+    vec3 tangent=normalize(cross(axis,light)),bitangent=cross(light,tangent);
+    // Local cone transport models softened droplet self-shadow. It deliberately
+    // does not pretend that five widely spaced taps can shadow an 18 km bank.
+    // The integration domain is identical at every quality (kilometres).
+    float nearStep=.01,end=.6,tau=rho*nearStep;
+    for(int j=1;j<LIGHT_STEPS;j++){
+        float a=float(j-1)/float(LIGHT_STEPS-1),b=float(j)/float(LIGHT_STEPS-1);
+        float t0=nearStep*pow(end/nearStep,a),t1=nearStep*pow(end/nearStep,b),t=(t0+t1)*.5;
+        float angle=float(j)*2.399963,radial=sqrt((float(j)+.5)/float(LIGHT_STEPS));
+        vec3 cone=(tangent*cos(angle)+bitangent*sin(angle))*radial*t*.25;
+        float sampleDensity=cloudDensity(p+light*t+cone,max(footprint,t*.25),t>.1);
         tau+=sampleDensity*(t1-t0);
     }
     return tau;
 }
 float waterScatter(vec3 phase,float tau){
-    return dot(phase*vec3(1.,.53,.28),exp(-tau*vec3(1.,.48,.23)));
+    return dot(phase*vec3(1.,.5,.25),exp(-tau*vec3(1.,.5,.25)));
 }
 vec3 waterDirectional(vec3 p,vec3 light,vec3 phase,float rho,float footprint){
     vec2 hit=sphere(p,light,Rg);
@@ -47,18 +51,21 @@ vec3 illumination(vec3 p,float rho,float footprint,CloudPhases phases){
     vec3 up=normalize(p);float sunHeight=dot(up,u_sun),moonHeight=dot(up,u_moon);
     float h=clamp((length(p)-Rg-u_base)/u_thickness,0.,1.);
     vec3 light=vec3(0);
-    if(sunHeight>-.08)light+=waterDirectional(p,u_sun,phases.sun,rho,footprint)*2.4;
+    float powder=mix(1.,1.-exp(-rho/16.*2.),.7);
+    float baseShadow=mix(1.,mix(.15,1.,smoothstep(0.,.13,h)),.88);
+    if(sunHeight>-.08)light+=waterDirectional(p,u_sun,phases.sun,rho,footprint)*vec3(1.6,1.55,1.47)*powder*baseShadow;
     // Night adaptation is deliberately separate from the displayed moon disc.
     // Phase and Earth occlusion still apply. At noon this entire light march skips.
     float moonEnergy=pow(clamp(u_moonFraction,0.,1.),1.6)*u_moonGain*
         (1.-smoothstep(-.1,.04,sunHeight));
     if(moonHeight>-.03&&moonEnergy>.0001)
-        light+=waterDirectional(p,u_moon,phases.moon,rho,footprint)*vec3(.15,.18,.23)*moonEnergy;
-    float overhead=cloudDensity(p+up*.3,footprint,true)*.3+cloudDensity(p+up*1.1,max(.08,footprint),true)*.7;
-    vec3 sky=mix(phases.horizon,phases.sky,.6+.4*sqrt(h));
-    light+=sky*(.22+.78*exp(-overhead*.35))*.8;
+        light+=waterDirectional(p,u_moon,phases.moon,rho,footprint)*vec3(.12,.14,.18)*moonEnergy*powder*baseShadow;
+    // Hemispheric fill already represents diffuse/multiple-scattered sky light.
+    // Two extra overhead taps used to suppress it a second time inside the cloud.
+    vec3 sky=mix(mix(phases.sky,phases.horizon,.35),phases.sky,sqrt(h));
+    light+=sky*.48;
     light+=vec3(.015,.017,.019)*max(0.,sunHeight)*(1.-h);
     // Weak diffuse night fill keeps unlit bases readable without painting them blue.
-    light+=vec3(.0012,.0015,.0022)*moonEnergy*max(0.,moonHeight)*exp(-overhead*.2);
-    return light*.93;
+    light+=vec3(.0008,.0009,.0012)*moonEnergy*max(0.,moonHeight);
+    return light;
 }
