@@ -8,6 +8,7 @@ import {WaterCloudEffect} from '../src/effects/water-clouds/WaterCloudEffect';
 import {JulianDate} from 'cesium';
 import {cloudComparisonView} from '../src/effects/water-clouds/comparisonView';
 import type {CloudQuality} from '../src/effects/global-clouds/config';
+import {highCloudPresets} from '../src/effects/global-clouds/config';
 import {celestialPositions} from '../src/effects/hillaire-atmosphere/CelestialLighting';
 
 const status=document.querySelector('#status')!;
@@ -64,7 +65,9 @@ try{
   if(query.has('time'))viewer.clock.currentTime=JulianDate.fromIso8601(query.get('time')!);
   if(query.has('moonLight'))clouds.moonLight=Number(query.get('moonLight'));
   if(query.has('coverage'))clouds.updateParameters({coverage:Number(query.get('coverage'))});
-  for(const key of ['seed','type','highCoverage','highBase','highThickness','highWind'] as const)
+  const highPreset=query.get('highPreset') as keyof typeof highCloudPresets|null;
+  if(highPreset&&highCloudPresets[highPreset])clouds.updateParameters(highCloudPresets[highPreset]);
+  for(const key of ['seed','type','highCoverage','highBase','highThickness','highWind','highType','highOpticalDepth','highAnisotropy','highAlbedo','highMultiple'] as const)
     if(query.has(key))clouds.updateParameters({[key]:Number(query.get(key))});
   const quality=query.get('quality')??'medium';
   if(['low','medium','high'].includes(quality))clouds.setQuality(quality as CloudQuality);

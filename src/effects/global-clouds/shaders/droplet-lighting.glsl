@@ -26,17 +26,34 @@ void cloudEnvironment(vec3 p,out vec3 sky,out vec3 horizon){
     }
 }
 CloudPhases scatteringPhases(vec3 d){
+    #ifdef LAYERED_CLOUDS
+    if(cloudLayer==1)return CloudPhases(vec3(waterPhase(dot(d,u_sun),u_highAnisotropy),0,0),vec3(waterPhase(dot(d,u_moon),u_highAnisotropy),0,0));
+    #endif
     return CloudPhases(waterPhases(dot(d,u_sun)),waterPhases(dot(d,u_moon)));
 }
+#ifdef LAYERED_CLOUDS
+vec3 iceDirectional(vec3 p,vec3 light,float phase){
+    if(planetOccludes(p,light))return vec3(0);
+    vec2 outer=sphere(p,light,Rg+u_highBase+u_highThickness),inner=sphere(p,light,Rg+u_highBase);
+    float end=max(0.,outer.y);if(inner.x>0.)end=min(end,inner.x);
+    // Local column held fixed along a finite curved light path. No droplet
+    // powder/base shadow and no inverse-cosine cap. Inter-layer shadows remain
+    // outside this approximation. Multiple scattering is an explicit weak lobe.
+    float tau=highLocalTau*highProfilePath(p,light,vec2(0,end)),T=exp(-tau);
+    vec3 air=u_atmosphere?sunTransmission(u_transmittance,p,light):vec3(1);
+    return air*u_highAlbedo*(phase*T+u_highMultiple*(1.-T)/(4.*PI));
+}
+vec3 iceIllumination(vec3 p,CloudPhases phases){
+    vec3 zenith,horizon;cloudEnvironment(p,zenith,horizon);
+    float sunHeight=dot(normalize(p),u_sun);
+    float moonEnergy=pow(clamp(u_moonFraction,0.,1.),1.6)*u_moonGain*(1.-smoothstep(-.1,.04,sunHeight));
+    vec3 result=iceDirectional(p,u_sun,phases.sun.x)*vec3(1.6,1.55,1.47);
+    if(moonEnergy>.0001)result+=iceDirectional(p,u_moon,phases.moon.x)*vec3(.12,.14,.18)*moonEnergy;
+    return result+mix(zenith,horizon,.35)*u_highAlbedo*.35;
+}
+#endif
 float waterLightDepth(vec3 p,vec3 light,float rho,float footprint){
     #ifdef LAYERED_CLOUDS
-    // Thin ice uses a bounded local column approximation, avoiding another cone
-    // march per high-cloud step. This does not model shadows between layers.
-    if(cloudLayer==1){
-        float h=clamp((length(p)-Rg-u_highBase)/u_highThickness,0.,1.);
-        float mu=dot(normalize(p),light);
-        return rho*min(8.,u_highThickness*(mu>0.?1.-h:h)/max(.08,abs(mu)))*.5;
-    }
     if(farCloudWeight(footprint)>=1.)return farCloudLightDepth(p,light,footprint);
     #endif
     vec3 axis=abs(light.z)>.99?vec3(0,1,0):vec3(0,0,1);
@@ -91,6 +108,9 @@ vec3 waterDirectional(vec3 p,vec3 light,vec3 phase,float rho,float footprint,flo
     return resolved;
 }
 vec3 illumination(vec3 p,float rho,float footprint,CloudPhases phases){
+    #ifdef LAYERED_CLOUDS
+    if(cloudLayer==1)return iceIllumination(p,phases);
+    #endif
     vec3 up=normalize(p);float sunHeight=dot(up,u_sun),moonHeight=dot(up,u_moon);
     float h=clamp((length(p)-Rg-u_base)/u_thickness,0.,1.);
     #ifdef LAYERED_CLOUDS

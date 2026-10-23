@@ -44,6 +44,14 @@ try{
   const optics=gl.createTexture();gl.activeTexture(gl.TEXTURE4);gl.bindTexture(gl.TEXTURE_3D,optics);
   gl.texImage3D(gl.TEXTURE_3D,0,gl.RGBA8,CLOUD_OPTICS_SIZE,CLOUD_OPTICS_SIZE,CLOUD_OPTICS_SIZE,0,gl.RGBA,gl.UNSIGNED_BYTE,createCloudOptics(sculpt.bytes,cellular.bytes));
   gl.texParameteri(gl.TEXTURE_3D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_3D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+  const ribbon=gl.createTexture();gl.activeTexture(gl.TEXTURE5);gl.bindTexture(gl.TEXTURE_2D,ribbon);
+  [iceAsset.ribbon,...iceAsset.ribbonMips].forEach((bytes,lod)=>{const size=NOISE_SIZE/2**lod;gl.texImage2D(gl.TEXTURE_2D,lod,gl.RGBA8,size,size,0,gl.RGBA,gl.UNSIGNED_BYTE,bytes);});
+  for(const p of [gl.TEXTURE_WRAP_S,gl.TEXTURE_WRAP_T])gl.texParameteri(gl.TEXTURE_2D,p,gl.REPEAT);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+  const anisotropic=gl.createTexture();gl.activeTexture(gl.TEXTURE6);gl.bindTexture(gl.TEXTURE_3D,anisotropic);
+  gl.texImage3D(gl.TEXTURE_3D,0,gl.RGBA8,127,64,64,0,gl.RGBA,gl.UNSIGNED_BYTE,iceAsset.anisotropic);
+  for(const p of [gl.TEXTURE_WRAP_S,gl.TEXTURE_WRAP_T,gl.TEXTURE_WRAP_R])gl.texParameteri(gl.TEXTURE_3D,p,gl.REPEAT);
+  gl.texParameteri(gl.TEXTURE_3D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_3D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
   function run(source:string,main:string,parameters:Record<string,number>={},vectors:Record<string,number[]>={}){
     const fragment=shader(gl.FRAGMENT_SHADER,'#version 300 es\nprecision highp float;\nout vec4 out_FragColor;\n'+source+main),program=gl.createProgram()!;
     gl.attachShader(program,vertex);gl.attachShader(program,fragment);gl.linkProgram(program);
@@ -51,9 +59,12 @@ try{
     gl.useProgram(program);gl.uniform1i(gl.getUniformLocation(program,'u_noise'),0);
     gl.uniform1i(gl.getUniformLocation(program,'u_voxels'),2);gl.uniform1i(gl.getUniformLocation(program,'u_voxelReady'),1);gl.uniform1i(gl.getUniformLocation(program,'u_skipVoxels'),1);
     gl.uniform1i(gl.getUniformLocation(program,'u_cirrus'),3);gl.uniform1i(gl.getUniformLocation(program,'u_cloudOptics'),4);gl.uniform1i(gl.getUniformLocation(program,'u_opticsReady'),1);
+    gl.uniform1i(gl.getUniformLocation(program,'u_iceRibbon'),5);
+    gl.uniform1i(gl.getUniformLocation(program,'u_iceAnisotropic'),6);
+    gl.uniform1f(gl.getUniformLocation(program,'u_highFilterGrid'),4);
     gl.uniform1i(gl.getUniformLocation(program,'u_weather'),1);gl.uniform1f(gl.getUniformLocation(program,'u_exposure'),1.25);gl.uniform1f(gl.getUniformLocation(program,'u_seed'),13);
     for(const name of ['u_transmittance','u_multiple','u_skyIrradiance'])gl.uniform1i(gl.getUniformLocation(program,name),1);
-    for(const [name,value] of Object.entries({u_columnGrid:12,u_base:1.5,u_thickness:3.8,u_coverage:.85,u_density:1.1,u_detail:.55,u_windAngle:0,u_windSpeed:24,u_evolution:0,u_cloudType:0,u_highBase:9,u_highThickness:1.5,u_highCoverage:.35,u_highAngle:0,u_moonFraction:1,u_moonGain:1,...parameters}))gl.uniform1f(gl.getUniformLocation(program,name),value);
+    for(const [name,value] of Object.entries({u_columnGrid:12,u_base:1.5,u_thickness:3.8,u_coverage:.85,u_density:1.1,u_detail:.55,u_windAngle:0,u_windSpeed:24,u_evolution:0,u_cloudType:0,u_highBase:9,u_highThickness:1.5,u_highCoverage:.35,u_highAngle:0,u_highType:0,u_highOpticalDepth:.35,u_highAnisotropy:.78,u_highAlbedo:.98,u_highMultiple:.12,u_moonFraction:1,u_moonGain:1,...parameters}))gl.uniform1f(gl.getUniformLocation(program,name),value);
     for(const [name,v] of Object.entries(vectors))gl.uniform3f(gl.getUniformLocation(program,name),v[0],v[1],v[2]);
     gl.viewport(0,0,512,1);gl.drawArrays(gl.TRIANGLES,0,3);
     const bytes=new Uint8Array(512*4);gl.readPixels(0,0,512,1,gl.RGBA,gl.UNSIGNED_BYTE,bytes);
@@ -198,7 +209,7 @@ try{
     {name:'night-side clouds receive no camera-side daylight',pass:nightSide.every((v,i)=>i%4===3||v===0)},
     ...columnStatistics.map((samples,layer)=>({name:layer===0?'main cloud column coverage survives satellite filtering':'ice optical depth survives unresolved fibres',
       pass:samples.every(s=>s.opacity>samples[0].opacity*.8&&s.opacity<samples[0].opacity*1.25),samples}))];
-  gl.deleteTexture(weather);gl.deleteTexture(noise);gl.deleteTexture(voxels);gl.deleteTexture(cirrus);gl.deleteTexture(optics);gl.deleteShader(vertex);
+  gl.deleteTexture(weather);gl.deleteTexture(noise);gl.deleteTexture(voxels);gl.deleteTexture(cirrus);gl.deleteTexture(optics);gl.deleteTexture(ribbon);gl.deleteTexture(anisotropic);gl.deleteShader(vertex);
   output.textContent=JSON.stringify({passed:checks.every(x=>x.pass),checks},null,2);
   document.title=checks.every(x=>x.pass)?'PASS · Cloud GPU regressions':'FAIL · Cloud GPU regressions';
 }catch(error){output.textContent=String(error);document.title='ERROR · Cloud GPU regressions';}

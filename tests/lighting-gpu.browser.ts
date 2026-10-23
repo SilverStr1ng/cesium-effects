@@ -14,6 +14,7 @@ import storage from '../src/effects/global-clouds/shaders/storage.glsl?raw';
 import radiometry from '../src/effects/global-clouds/shaders/radiometry.glsl?raw';
 import display from '../src/scene/display.glsl?raw';
 import march from '../src/effects/global-clouds/shaders/march.glsl?raw';
+import cloudTransport from '../src/effects/global-clouds/shaders/transport.glsl?raw';
 import intervals from '../src/effects/global-clouds/shaders/intervals.glsl?raw';
 
 const output=document.querySelector('#result')!;
@@ -94,17 +95,18 @@ try{
   // Count preparation at the actual march call site, with a vacuum cloud field.
   // A ray missing both shells must never call scatteringPhases at all.
   const instrumented=lighting.replace('CloudPhases scatteringPhases(vec3 d){','CloudPhases scatteringPhases(vec3 d){phaseCalls+=1.;');
-  const marchStub=`uniform sampler2D depthTexture;uniform float u_pixelAngle,u_highBase,u_highThickness,u_highCoverage;
+  const marchStub=`uniform sampler2D depthTexture;uniform float u_pixelAngle,u_highBase,u_highThickness,u_highCoverage,u_highType,u_highAnisotropy,u_highAlbedo,u_highMultiple,u_coverage,u_density,u_highOpticalDepth;
     uniform bool u_voxelReady,u_skipVoxels,u_opticsReady;int cloudLayer=0,cloudRepresentation=0;float cloudSlant=1.,cloudStep=0.,phaseCalls=0.,farShape=64.;vec3 cloudRay,farAnchor,cloudScreenRight,cloudScreenUp;vec4 farMoments=vec4(0);float debugMipA=-1.,debugMipB=-1.;
     float layerBase(){return cloudLayer==0?u_base:u_highBase;}float layerThickness(){return cloudLayer==0?u_thickness:u_highThickness;}
     float voxelEmptyDistance(vec3 p,float f){return 0.;}float voxelBodyDepth(vec3 p,float f){return 0.;}
     float farCloudWeight(float f){return 0.;}float farCloudLightDepth(vec3 p,vec3 l,float f){return 0.;}
     float lowCloudDensity(vec3 p,float f,bool coarse){return 0.;}
+    float highPathScale=1.,highLocalTau=0.;float highProfilePath(vec3 p,vec3 d,vec2 path){return 1.;}float highFarWeight(float f){return 1.;}
     vec3 columnOptics(vec2 w,float s){return vec3(0);}vec2 cloudWeather(vec3 p,float f){return vec2(0);}
     vec3 cloudSource(vec3 light){return light;}vec3 storeCloudRadiance(vec3 light){return vec3(phaseCalls,0,0);}`;
   const calls=[1,-1].map(sign=>Number(gpu.draw('#define LAYERED_CLOUDS\n#define CLOUD_STEPS 4\n#define CLOUD_SUBSTEPS 1\n#define LIGHT_STEPS 3\n'+
-    cesium.replace('czm_inverseView=mat4(1)',`czm_inverseView=mat4(1,0,0,0,0,1,0,0,0,0,${sign},0,0,0,0,1)`)+common+transport+irradianceSample+globals+marchStub+instrumented+intervals+march,1,1,
-    {...uniforms,u_atmosphere:false,u_camera:[0,0,23378.137],u_highCoverage:1,u_highBase:9,u_highThickness:1.5,u_pixelAngle:.001},
+    cesium.replace('czm_inverseView=mat4(1)',`czm_inverseView=mat4(1,0,0,0,0,1,0,0,0,0,${sign},0,0,0,0,1)`)+common+transport+irradianceSample+globals+marchStub+instrumented+intervals+cloudTransport+march,1,1,
+    {...uniforms,u_atmosphere:false,u_camera:[0,0,23378.137],u_coverage:1,u_density:1,u_highOpticalDepth:.35,u_highCoverage:1,u_highBase:9,u_highThickness:1.5,u_pixelAngle:.001},
     {...inputs,depthTexture:black},true).pixels[0]));
   checks.push({name:'actual cloud march prepares phases only after a valid interval (space miss / two shell hits)',pass:calls[0]===0&&calls[1]===2,calls});
   output.textContent=JSON.stringify({passed:checks.every(c=>c.pass),checks},null,2);document.title=checks.every(c=>c.pass)?'PASS · Lighting GPU':'FAIL · Lighting GPU';

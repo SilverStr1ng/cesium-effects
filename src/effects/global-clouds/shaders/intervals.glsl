@@ -14,9 +14,10 @@ void shellIntervals(vec3 origin,vec3 d,float maximum,float base,float thickness,
 void cloudIntervals(vec3 origin,vec3 d,float maximum,out vec2 intervals[4],out int layers[4]){
     vec2 ground=sphere(origin,d,Rg);
     if(ground.x>0.)maximum=min(maximum,ground.x);
-    shellIntervals(origin,d,maximum,u_base,u_thickness,intervals[0],intervals[1]);
+    intervals[0]=vec2(1e9);intervals[1]=vec2(1e9);
+    if(u_coverage>0.&&u_density>0.)shellIntervals(origin,d,maximum,u_base,u_thickness,intervals[0],intervals[1]);
     intervals[2]=vec2(1e9);intervals[3]=vec2(1e9);
-    if(u_highCoverage>0.)shellIntervals(origin,d,maximum,u_highBase,u_highThickness,intervals[2],intervals[3]);
+    if(u_highCoverage>0.&&u_highOpticalDepth>0.)shellIntervals(origin,d,maximum,u_highBase,u_highThickness,intervals[2],intervals[3]);
     layers[0]=0;layers[1]=0;layers[2]=1;layers[3]=1;
     for(int i=1;i<4;i++)for(int j=0;j<3;j++){
         if(j>=4-i)break;

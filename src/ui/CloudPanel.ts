@@ -1,5 +1,6 @@
 import type {CloudComparison,CloudMode} from '../effects/water-clouds/CloudComparison';
 import type {CloudParameters,CloudQuality,CloudView} from '../effects/global-clouds/config';
+import {highCloudPresets} from '../effects/global-clouds/config';
 import type {CloudDebugView} from '../effects/global-clouds/GlobalCloudEffect';
 
 export function mountCloudPanel(parent:HTMLElement,cloud:CloudComparison,onLightingPreset:(night:boolean)=>void){
@@ -20,7 +21,10 @@ export function mountCloudPanel(parent:HTMLElement,cloud:CloudComparison,onLight
       <label class="environment-label" for="cloud-type">主云层云型</label>
       <select id="cloud-type"><option value="0">天气混合 · 层积云 / 积云</option><option value="1">层云 · 扁平低矮</option><option value="2">层积云 · 成片云团</option><option value="3">积云 · 垂直发展</option></select>
       <p class="environment-description">云型控制垂直剖面；云底和厚度控制高度范围。高层卷云独立分布，云量设为 0 可关闭。</p>
+      <label class="environment-label" for="high-preset">独立高云预设</label>
+      <select id="high-preset"><option value="cirrus">Cirrus · 稀疏弯曲纤维</option><option value="cirrostratus">Cirrostratus · 半透明薄幕</option></select>
       <div id="cloud-high-controls"></div>
+      <p class="environment-description">τᵥ 控制垂直云柱光学厚度；改变几何厚度不会重复增加消光。天气和纤维调制当地云柱。</p>
       <p class="environment-description">卷云底至少高于主云层顶部 0.5 km；调整主云层时会自动上移。</p>
     </div>
     <label class="environment-label" for="cloud-quality">云渲染质量</label><select id="cloud-quality"><option value="low">流畅 · 节省性能</option><option value="medium" selected>均衡 · 推荐</option><option value="high">精细 · 更多细节</option></select>
@@ -59,13 +63,18 @@ export function mountCloudPanel(parent:HTMLElement,cloud:CloudComparison,onLight
     {key:'detail',label:'边缘细节',min:0,max:1,step:.01,unit:''},
   ];
   const syncs:(()=>void)[]=[];
+  const highPreset=panel.querySelector<HTMLSelectElement>('#high-preset')!;
+  const syncHigh=()=>{highPreset.value=cloud.parameters.highType===0?'cirrus':'cirrostratus';};
+  highPreset.onchange=()=>{cloud.updateParameters(highCloudPresets[highPreset.value as keyof typeof highCloudPresets]);syncs.forEach(sync=>sync());};
+  syncHigh();syncs.push(syncHigh);
   const type=panel.querySelector<HTMLSelectElement>('#cloud-type')!;
   const syncType=()=>{type.value=String(cloud.parameters.type);};
   type.onchange=()=>{cloud.updateParameters({type:Number(type.value)});syncType();};syncType();syncs.push(syncType);
   specs.push(
-    {key:'highCoverage',label:'卷云云量',min:0,max:1,step:.01,unit:''},
-    {key:'highBase',label:'卷云底高度',min:6,max:32,step:.1,unit:'km'},
-    {key:'highThickness',label:'卷云厚度',min:.3,max:4,step:.1,unit:'km'},
+    {key:'highCoverage',label:'高云云量',min:0,max:1,step:.01,unit:''},
+    {key:'highOpticalDepth',label:'垂直光学厚度 τᵥ',min:0,max:2,step:.01,unit:''},
+    {key:'highBase',label:'高云底高度',min:6,max:32,step:.1,unit:'km'},
+    {key:'highThickness',label:'高云厚度',min:.3,max:4,step:.1,unit:'km'},
     {key:'highWind',label:'高层风速',min:0,max:200,step:1,unit:'m/s'},
   );
   for(const spec of specs){

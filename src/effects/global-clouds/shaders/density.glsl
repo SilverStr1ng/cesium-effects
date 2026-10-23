@@ -4,6 +4,8 @@ uniform sampler3D u_noise;
 uniform sampler3D u_voxels;
 uniform sampler3D u_cloudOptics;
 uniform sampler3D u_cirrus;
+uniform sampler2D u_iceRibbon;
+uniform sampler3D u_iceAnisotropic;
 uniform bool u_opticsReady;
 // Runtime bound avoids ANGLE unrolling 144 texture-heavy subcolumns into each
 // density/light call. Production fixes this to 12 at every quality.
@@ -13,6 +15,8 @@ vec4 voxelShape(vec3 p,float footprint);
 float voxelBodyDepth(vec3 p,float footprint);
 uniform float u_base,u_thickness,u_coverage,u_density,u_detail,u_windAngle,u_seed,u_evolution,u_windSpeed;
 uniform float u_cloudType,u_highBase,u_highThickness,u_highCoverage,u_highAngle;
+uniform float u_highType,u_highOpticalDepth,u_highAnisotropy,u_highAlbedo,u_highMultiple;
+uniform float u_highFilterGrid;
 int cloudLayer=0;
 float cloudSlant=1.;
 vec3 cloudRay=vec3(0,0,1);
@@ -209,47 +213,141 @@ float lowCloudDensity(vec3 p,float footprint,bool coarse){
     return body*smoothstep(0.,.045,h)*(1.-smoothstep(.92,1.,h))*7.*u_density;
 }
 
-// A finite, sparse ice layer. Directional world-space domains avoid longitude
-// seams/pole singularities; warped noncommensurate bands avoid repeated tiles.
-// This is procedural cirrus, not a voxel-authored Nubis asset or ice microphysics.
-vec3 cirrus(vec3 domain,vec3 stretch,float scale,float footprint){
-    // A long integration interval parallel to a strand does not have the same
-    // bandwidth as one crossing it. Include the domain's directional derivative.
-    float c=cos(u_highAngle),s=sin(u_highAngle);
-    vec3 ray=vec3(c*cloudRay.x-s*cloudRay.y,s*cloudRay.x+c*cloudRay.y,cloudRay.z);
-    float support=max(footprint,length(ray*stretch)*cloudStep*.5);
-    float lod=max(0.,log2(max(.001,support)*64./scale));
-    return textureLod(u_cirrus,domain*stretch/scale,lod).rgb;
+// A smooth spherical streamfunction organizes curved fibres. Its surface curl
+// is the local wind, with shear from the spatially varying potential gradient.
+// No longitude frame, normalized zero velocity, or globally stretched X axis.
+vec3 highRotate(vec3 p){float c=cos(u_highAngle),s=sin(u_highAngle);return vec3(c*p.x-s*p.y,s*p.x+c*p.y,p.z);}
+void highDomain(vec3 p,out vec3 uv,out mat3 J,out float regular){
+    vec3 n=normalize(highRotate(p));
+    vec3 a=normalize(vec3(.17,.41,.896)),b=normalize(vec3(.91,-.38,.03)),c=normalize(cross(a,b));
+    float v=dot(n,b),w=dot(n,c),bend=4.*v+1.1*sin(3.*w);
+    float psi=dot(n,a)+.13*sin(bend);
+    vec3 gradient=a+.52*cos(bend)*b+.429*cos(bend)*cos(3.*w)*c;
+    vec3 surface=gradient-n*dot(n,gradient);
+    // The anisotropic domain degenerates continuously at stagnation points;
+    // cross-fade to isotropic material there rather than inventing a direction.
+    regular=smoothstep(.04,.22,length(surface));
+    // Kilometre-scale fallstreak curvature rides the larger jet. Taper its
+    // potential (and include that taper's derivative) at stagnation, preserving
+    // a continuous wind and the true Jacobian used by the anisotropic filter.
+    vec3 ds=4.*b+3.3*cos(3.*w)*c;
+    vec3 speedGradient=(-.13*sin(bend)*ds*dot(ds,surface)-1.287*cos(bend)*sin(3.*w)*c*dot(c,surface)-dot(n,gradient)*surface)/max(.0001,length(surface));
+    float t=clamp((length(surface)-.04)/.18,0.,1.);
+    vec3 regularGradient=speedGradient*(6.*t*(1.-t)/.18);
+    float trail=1500.*v+.9*sin(1100.*w);
+    psi+=regular*.00008*sin(trail);
+    gradient+=regular*.00008*cos(trail)*(1500.*b+990.*cos(1100.*w)*c)+.00008*sin(trail)*regularGradient;
+    // Break the transverse texture's periodic spacing without introducing a
+    // discontinuous tile rotation. This noncommensurate potential changes
+    // spacing and local shear; its full derivative also enters the filter.
+    float spacing=6900.*psi+3100.*v+1700.*w;
+    gradient+=.000045*(regular*cos(spacing)*(6900.*gradient+3100.*b+1700.*c)+sin(spacing)*regularGradient);
+    psi+=regular*.000045*sin(spacing);
+    surface=gradient-n*dot(n,gradient);
+    // Several-kilometre coherent trails, with gaps along the wind. Stretching
+    // these coordinates by 60/37 repeated the same stripes across a whole sky.
+    uv=vec3(psi,v/18.,w/13.)*((Rg+u_highBase)/2.1)+u_seed*.37;
+    float metric=(Rg+u_highBase)/length(p)/2.1;
+    J=transpose(mat3(surface,(b-n*v)/18.,(c-n*w)/13.))*metric;
+}
+float highProfile(float h){return h<=0.||h>=1.?0.:30.*h*h*(1.-h)*(1.-h);}
+// Finite spherical path integral. No 1/mu slab singularity at the limb.
+float highProfilePath(vec3 origin,vec3 d,vec2 path){
+    float sum=0.,ds=max(0.,path.y-path.x)/8.;
+    for(int i=0;i<8;i++)sum+=highProfile((length(origin+d*(path.x+(float(i)+.5)*ds))-Rg-u_highBase)/u_highThickness)*ds/u_highThickness;
+    return sum;
+}
+float highPathScale=1.,highLocalTau=0.;
+float highFarWeight(float footprint){return smoothstep(.08,.8,footprint);}
+vec4 highTransverseLevel(vec3 uv,float level){
+    float size=64./exp2(level),offset=128.-2.*size,x=fract(uv.x)*size-.5;
+    float a=mod(floor(x)+size,size),b=mod(a+1.,size);
+    return mix(textureLod(u_iceAnisotropic,vec3((offset+a+.5)/127.,uv.yz),0.),textureLod(u_iceAnisotropic,vec3((offset+b+.5)/127.,uv.yz),0.),fract(x));
+}
+vec4 highTransverse(vec3 uv,float support){
+    float lod=clamp(log2(max(1e-6,support)*64.),0.,6.),a=floor(lod);
+    // Texture LOD here addresses a MANUAL one-axis mip atlas; the material
+    // level is footprint-driven, not locked to the source's base resolution.
+    return mix(highTransverseLevel(uv,a),highTransverseLevel(uv,min(6.,a+1.)),fract(lod));
+}
+vec3 highMaterialAnchor=vec3(1e8);vec4 highCachedMaterial=vec4(0);
+float highCachedFootprint=-1.,highCachedStep=-1.;
+float highIsotropicSupport(vec3 p,float footprint,float scale){
+    vec3 n=normalize(highRotate(p)),r=highRotate(cloudScreenRight),u=highRotate(cloudScreenUp),d=highRotate(cloudRay);
+    r-=n*dot(n,r);u-=n*dot(n,u);d-=n*dot(n,d);
+    float metric=(Rg+u_highBase)/length(p)/scale;
+    return max(footprint*sqrt(dot(r,r)+dot(u,u))*metric,length(d)*cloudStep*.5*metric+cloudStep*cloudStep/(8.*(Rg+u_highBase)*scale));
+}
+vec4 highMaterial(vec3 p,float footprint){
+    vec3 column=normalize(p)*(Rg+u_highBase);
+    if(distance(column,highMaterialAnchor)<max(.002,footprint*.05)&&abs(footprint-highCachedFootprint)<max(.0001,footprint*.01)&&abs(cloudStep-highCachedStep)<max(.0001,cloudStep*.01))return highCachedMaterial;
+    highMaterialAnchor=column;highCachedFootprint=footprint;highCachedStep=cloudStep;
+    vec3 uv;mat3 J;float regular;highDomain(p,uv,J,regular);
+    vec3 right=highRotate(cloudScreenRight),up=highRotate(cloudScreenUp),ray=highRotate(cloudRay);
+    vec3 dx=J*right*footprint,dy=J*up*footprint,dz=J*ray*cloudStep;
+    // Jacobian of the complete anisotropic map, including radial projection.
+    // The interval support also includes its small spherical curvature term.
+    float curve=cloudStep*cloudStep/(8.*(Rg+u_highBase)*2.1);
+    vec3 width=sqrt(dx*dx+dy*dy+dz*dz)+curve;
+    float collapsed=smoothstep(.7,1.5,width.x);
+    int grid=max(1,int(u_highFilterGrid));float count=float(grid*grid),invGrid=1./float(grid);
+    vec4 fibres=vec4(0);
+    if(collapsed<1.){
+        // Bounded anisotropic quadrature: mip support shrinks with each tap,
+        // rather than blurring the long axis at the transverse mip level.
+        float support=max(max(abs(dx.x),abs(dy.x))*invGrid,abs(dz.x)*.5)+curve;
+        for(int y=0;y<grid;y++)for(int x=0;x<grid;x++)fibres+=highTransverse(uv+dx*((float(x)+.5)*invGrid-.5)+dy*((float(y)+.5)*invGrid-.5),support)/count;
+    }
+    if(collapsed>0.){
+        float lod=max(0.,log2(max(1e-6,max(width.y,width.z)*invGrid)*64.));
+        vec4 ribbon=vec4(0);for(int y=0;y<grid;y++)for(int x=0;x<grid;x++)ribbon+=textureLod(u_iceRibbon,uv.yz+dx.yz*((float(x)+.5)*invGrid-.5)+dy.yz*((float(y)+.5)*invGrid-.5),lod)/count;
+        fibres=mix(fibres,ribbon,collapsed);
+    }
+    if(regular<1.){
+        vec3 q=normalize(highRotate(p))*(Rg+u_highBase);
+        float isoLod=max(0.,log2(max(1e-6,highIsotropicSupport(p,footprint,2.1))*64.));
+        fibres=mix(textureLod(u_cirrus,q/2.1+u_seed*.37,isoLod),fibres,regular);
+    }
+    highCachedMaterial=fibres;return fibres;
+}
+// Gamma closure conditioned on nonempty area. Fit mean m and measured T(4),
+// both filtered AFTER shaping. This preserves holes and avoids exp(-E[tau]).
+float highMaterialTransmission(vec4 m,float scale){
+    if(m.r<=0.||scale<=0.)return 1.;
+    float area=max(m.b,m.r),mean=m.r/max(.00001,area);
+    float target=-log(max(.00001,1.-m.g/max(.00001,area)));
+    float lo=.03125,hi=128.;
+    for(int i=0;i<8;i++){float k=sqrt(lo*hi);if(k*log(1.+mean*4./k)<target)lo=k;else hi=k;}
+    float shape=sqrt(lo*hi);
+    return 1.-area+area*pow(1.+mean*scale/shape,-shape);
+}
+float highEnvelope(vec3 p){
+    vec3 q=normalize(highRotate(p))*(Rg+u_highBase);
+    vec4 weather=textureLod(u_weather,weatherUV(q+vec3(740,-310,570)),0.);
+    float region=weather.b*.7+weather.g*.3;
+    float threshold=mix(.76,.18,u_highCoverage);
+    float bank=smoothstep(threshold-.10,threshold+.10,region)*smoothstep(0.,.08,u_highCoverage);
+    return u_highType<.5?bank:mix(bank,1.,u_highCoverage*.7)*smoothstep(0.,.08,u_highCoverage);
 }
 float highCloudDensity(vec3 p,float footprint){
-    if(u_highCoverage<=0.)return 0.;
-    float h=(length(p)-Rg-u_highBase)/u_highThickness;
-    if(h<=0.||h>=1.)return 0.;
-    float c=cos(u_highAngle),s=sin(u_highAngle);
-    vec3 q=vec3(c*p.x-s*p.y,s*p.x+c*p.y,p.z);
-    vec3 column=normalize(q)*(Rg+u_highBase);
-    vec4 weather=textureLod(u_weather,weatherUV(column+vec3(740,-310,570)),0.);
-    float warp=cellular(column+u_seed*.71,173.1,footprint).a-.5;
-    // Stretch along a world axis; its projection is a continuous tangent flow.
-    // Near that axis's poles the strands naturally shorten instead of forming
-    // an equirectangular seam or a singular local tangent frame.
-    vec3 domain=column;
-    domain+=vec3(warp*15.,warp*3.,warp*9.)+u_seed*.37;
-    float curl=cellular(column+vec3(37,-53,81),23.7,footprint).a-.5;
-    domain+=vec3(0,curl*1.6,curl*1.1);
-    float broad=cirrus(column+vec3(83,121,-71),vec3(1),119.3,footprint).g;
-    float envelope=clamp(broad+(weather.b-.5)*.22+(u_highCoverage-.35)*1.3,0.,1.)*smoothstep(0.,.08,u_highCoverage);
-    if(envelope<.001)return 0.;
-    // Hundreds of metres across, tens of kilometres along the flow. Kilometre-
-    // wide value-noise lobes produced soft cumulus-shaped smears at this height.
-    vec3 stretch=vec3(.012,1.,1.);
-    domain+=vec3(h*4.,h*.2,0.);
-    float fiber=cirrus(domain,stretch,2.1,footprint).r;
-    float breakup=cirrus(domain+vec3(32,-51,71),vec3(1),17.3,footprint).b;
-    float fine=cirrus(domain+vec3(13,27,91),vec3(.008,1.,1.),.71,footprint).r;
-    float mask=(fiber*.84+fine*.16)*1.12*breakup;
-    float vertical=smoothstep(0.,.22,h)*(1.-smoothstep(.48,1.,h));
-    return envelope*mask*vertical*.26;
+    highLocalTau=0.;
+    if(u_highCoverage<=0.||u_highOpticalDepth<=0.)return 0.;
+    float h=(length(p)-Rg-u_highBase)/u_highThickness,profile=highProfile(h);
+    if(profile<=0.)return 0.;
+    float envelope=highEnvelope(p);if(envelope<=0.)return 0.;
+    if(u_highType>.5){
+        // Cirrostratus: broad, slowly varying veil; no fibre threshold.
+        vec3 q=normalize(highRotate(p))*(Rg+u_highBase);
+        float mask=textureLod(u_cirrus,q/183.7+u_seed*.37,max(0.,log2(max(1e-6,highIsotropicSupport(p,footprint,183.7))*64.))).a;
+        highLocalTau=u_highOpticalDepth*envelope*mask;
+        return highLocalTau*profile/u_highThickness;
+    }
+    vec4 material=highMaterial(p,footprint);
+    highLocalTau=u_highOpticalDepth*envelope*material.r;
+    float far=cloudRepresentation==1?0.:cloudRepresentation==2?1.:highFarWeight(footprint);
+    if(far<=0.)return highLocalTau*profile/u_highThickness;
+    float effective=-log(max(1e-7,highMaterialTransmission(material,u_highOpticalDepth*envelope*highPathScale)))/max(.0001,highPathScale);
+    return effective*profile/u_highThickness;
 }
 float cloudDensity(vec3 p,float footprint,bool coarse){
     if(cloudLayer==1)return highCloudDensity(p,footprint);

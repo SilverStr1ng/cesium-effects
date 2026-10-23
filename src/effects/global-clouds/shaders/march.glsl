@@ -13,21 +13,16 @@ float sceneDepth(vec2 uv){
     if(lo<=0.||hi>=1.||hi-lo>.002)return texture(depthTexture,uv).r;
     return mix(mix(z.x,z.y,f.x),mix(z.z,z.w,f.x),f.y);
 }
-void integrateCloudMedium(vec3 d,vec2 segment,inout vec4 acc,inout float weightedDistance){
-    if(segment.y<=segment.x)return;
+CloudSegment integrateCloudMedium(vec3 d,vec2 segment){
+    CloudSegment result=emptyCloudSegment();
+    if(segment.y<=segment.x)return result;
     CloudPhases phases=scatteringPhases(d);
     float jitter=fract(52.9829189*fract(dot(gl_FragCoord.xy,vec2(.06711056,.00583715))));
     float span=segment.y-segment.x;
     #ifdef LAYERED_CLOUDS
     cloudRay=d;
-    if(cloudLayer==1){
-        // Ice is dominated by forward scattering, unlike the liquid dual lobe.
-        float cs=dot(d,u_sun),cm=dot(d,u_moon);
-        phases.sun=vec3(mix(1./(4.*PI),waterPhase(cs,.82),.85),waterPhase(cs,.35),1./(4.*PI));
-        phases.moon=vec3(mix(1./(4.*PI),waterPhase(cm,.82),.85),waterPhase(cm,.35),1./(4.*PI));
-    }
     #endif
-    float skipUntil=segment.x,skipFootprint=0.;
+    float skipUntil=segment.x,skipFootprint=0.,processedEnd=segment.x;
     int steps=CLOUD_STEPS;
     #ifdef LAYERED_CLOUDS
     if(cloudLayer==1)steps=max(8,int(mix(float(CLOUD_STEPS)*.25,float(CLOUD_STEPS)*.75,smoothstep(20.,120.,span))));
@@ -42,6 +37,7 @@ void integrateCloudMedium(vec3 d,vec2 segment,inout vec4 acc,inout float weighte
         float a=float(i)/float(steps),b=float(i+1)/float(steps);
         float t0=segment.x+mix(a,a*a,curve)*span,t1=segment.x+mix(b,b*b,curve)*span;
         float mid=(t0+t1)*.5,footprint=max(.002,mid*u_pixelAngle);
+        bool skipDensity=false;
         #ifdef LAYERED_CLOUDS
         // Filter sub-interval detail as well as the screen pixel footprint.
         // This prevents distant fine erosion from becoming static white specks.
@@ -49,9 +45,8 @@ void integrateCloudMedium(vec3 d,vec2 segment,inout vec4 acc,inout float weighte
         if(cloudLayer==0&&u_voxelReady&&u_skipVoxels){
             // A later interval may use a wider mip footprint than the one that
             // established this bound. Shrink the reusable empty range first.
-            if(t1<=skipUntil-6.*max(0.,footprint-skipFootprint))continue;
-            skipUntil=t0+voxelEmptyDistance(u_camera+d*t0,footprint);skipFootprint=footprint;
-            if(t1<=skipUntil)continue;
+            if(t1<=skipUntil-6.*max(0.,footprint-skipFootprint))skipDensity=true;
+            else{skipUntil=t0+voxelEmptyDistance(u_camera+d*t0,footprint);skipFootprint=footprint;skipDensity=t1<=skipUntil;}
             // Keep the quadrature of partially occupied intervals unchanged.
             // Only skip entire intervals that have a conservative empty bound.
         }
@@ -65,6 +60,7 @@ void integrateCloudMedium(vec3 d,vec2 segment,inout vec4 acc,inout float weighte
         // its edges are empty, especially at a sharp cloud silhouette.
         {
             float count=clamp(ceil((t1-t0)/max(.045,footprint)),1.,float(CLOUD_SUBSTEPS));
+            if(skipDensity)count=1.;
             #ifdef LAYERED_CLOUDS
             if(cloudLayer==1)count=1.;
             #endif
@@ -98,44 +94,59 @@ void integrateCloudMedium(vec3 d,vec2 segment,inout vec4 acc,inout float weighte
                     if(u_debugView==3.){debugWeather+=cloudWeather(p,footprint).x*ds;debugWeatherLength+=ds;}
                 }
                 #endif
-                float rho=cloudDensity(p,footprint,false);
-                if(rho>.001){
-                    float alpha=1.-exp(-rho*ds);
-                    vec3 light=illumination(p,rho,footprint,phases);
-                    float weight=(1.-acc.a)*alpha;
-                    acc.rgb+=weight*cloudSource(light);weightedDistance+=weight*t;acc.a+=weight;
-                    if(acc.a>.995&&u_debugView==0.)break;
-                }
+                float rho=skipDensity?0.:cloudDensity(p,footprint,false);
+                vec3 source=vec3(0),airSource=vec3(0),airExtinction=vec3(0);
+                if(rho>1e-7)source=cloudSource(illumination(p,rho,footprint,phases));
+                if(u_atmosphere)atmosphereSource(p,d,u_sun,airSource,airExtinction);
+                cloudTransportStep(result,airSource,airExtinction,rho,source,ds);
+                processedEnd=t0+float(s+1)*ds;
+                if(result.cloudT<.005&&u_debugView==0.)break;
             }
         }
-        if(acc.a>.995&&u_debugView==0.)break;
+        if(result.cloudT<.005&&u_debugView==0.)break;
     }
+    // Preserve the complete clear-air segment even when cloud opacity permits
+    // early exit. Its background subtraction must refer to the same endpoints.
+    if(u_atmosphere&&processedEnd<segment.y){
+        vec3 tailL,tailT;integrateAtmosphere(u_camera+d*processedEnd,d,segment.y-processedEnd,8,tailL,tailT);
+        result.L+=result.T*tailL;result.T*=tailT;
+        result.airL+=result.airT*tailL;result.airT*=tailT;
+    }
+    return result;
 }
-void integrateCloud(vec3 d,vec2 segment,inout vec4 acc,inout float weightedDistance){
-    if(segment.y<=segment.x)return;
+CloudSegment integrateCloud(vec3 d,vec2 segment){
+    if(segment.y<=segment.x)return emptyCloudSegment();
     debugPathLength+=segment.y-segment.x;
     #ifdef LAYERED_CLOUDS
-    if(cloudLayer==0&&u_opticsReady){
+    if(cloudLayer==1)highPathScale=max(.0001,highProfilePath(u_camera,d,segment));
+    if((cloudLayer==0&&u_opticsReady)||(cloudLayer==1&&u_highType<.5)){
         float footprint=max(.002,(segment.x+segment.y)*.5*u_pixelAngle);
-        float blend=farCloudWeight(footprint);
-        vec4 nearCloud=vec4(0),farCloud=vec4(0);float nearDistance=0.,farDistance=0.;
+        float blend=cloudLayer==0?farCloudWeight(footprint):highFarWeight(footprint);
+        CloudSegment nearCloud=emptyCloudSegment(),farCloud=emptyCloudSegment();
         // One call site also keeps the large march body from being duplicated
         // by ANGLE. The uniform-driven start keeps this tiny loop dynamic.
         for(int mode=blend>=1.?2:1;mode<=2;mode++){
             cloudRepresentation=mode;farAnchor=vec3(1e8);
-            vec4 part=vec4(0);float partDistance=0.;integrateCloudMedium(d,segment,part,partDistance);
-            if(mode==1){nearCloud=part;nearDistance=partDistance;}else{farCloud=part;farDistance=partDistance;}
+            CloudSegment part=integrateCloudMedium(d,segment);
+            if(mode==1)nearCloud=part;else farCloud=part;
             if(blend<=0.)break;
         }
         cloudRepresentation=0;
         // Convex mixture of the same cloud segment, in premultiplied linear L/T.
         // Integrating mixed rho would take a geometric mean of T and add mass.
-        vec4 local=mix(nearCloud,farCloud,blend);
-        weightedDistance+=(1.-acc.a)*mix(nearDistance,farDistance,blend);
-        acc+=local*(1.-acc.a);return;
+        return mixCloudSegments(nearCloud,farCloud,blend);
     }
     #endif
-    integrateCloudMedium(d,segment,acc,weightedDistance);
+    return integrateCloudMedium(d,segment);
+}
+void integrateCloudInterval(vec3 d,vec2 segment,inout vec4 acc,inout vec3 airL,inout vec3 airT,inout float cursor){
+    if(segment.y<=segment.x)return;
+    if(u_atmosphere&&segment.x>cursor){
+        vec3 gapL,gapT;integrateAtmosphere(u_camera+d*cursor,d,segment.x-cursor,8,gapL,gapT);
+        airL+=airT*gapL;airT*=gapT;
+    }
+    CloudSegment local=integrateCloud(d,segment);
+    appendCloudSegment(local,acc,airL,airT);cursor=segment.y;
 }
 void main(){
     vec4 eye=czm_inverseProjection*vec4(v_textureCoordinates*2.-1.,1,1);
@@ -148,20 +159,20 @@ void main(){
     if(depth>0.&&depth<1.){vec4 hit=czm_windowToEyeCoordinates(v_textureCoordinates*czm_viewport.zw+czm_viewport.xy,depth);maximum=atmosphereRayDistance(wc,length(hit.xyz/hit.w));}
     vec2 ground=sphere(u_camera,d,Rg);
     if(ground.x>0.)maximum=min(maximum,ground.x);
-    vec4 acc=vec4(0);float weightedDistance=0.;
+    vec4 acc=vec4(0);vec3 airL=vec3(0),airT=vec3(1);float cursor=0.;
     #ifdef LAYERED_CLOUDS
     vec2 intervals[4];int layers[4];
     cloudIntervals(u_camera,d,maximum,intervals,layers);
     for(int i=0;i<4;i++){
-        cloudLayer=layers[i];integrateCloud(d,intervals[i],acc,weightedDistance);
+        cloudLayer=layers[i];integrateCloudInterval(d,intervals[i],acc,airL,airT,cursor);
         if(acc.a>.995&&u_debugView==0.)break;
     }
     #else
     vec2 outer=sphere(u_camera,d,Rg+u_base+u_thickness);outer=vec2(max(0.,outer.x),min(maximum,outer.y));
     if(outer.y>outer.x){
         vec2 inner=sphere(u_camera,d,Rg+u_base);
-        if(inner.y<=outer.x||inner.x>=outer.y)integrateCloud(d,outer,acc,weightedDistance);
-        else{integrateCloud(d,vec2(outer.x,min(outer.y,inner.x)),acc,weightedDistance);if(acc.a<.995)integrateCloud(d,vec2(max(outer.x,inner.y),outer.y),acc,weightedDistance);}
+        if(inner.y<=outer.x||inner.x>=outer.y)integrateCloudInterval(d,outer,acc,airL,airT,cursor);
+        else{integrateCloudInterval(d,vec2(outer.x,min(outer.y,inner.x)),acc,airL,airT,cursor);if(acc.a<.995)integrateCloudInterval(d,vec2(max(outer.x,inner.y),outer.y),acc,airL,airT,cursor);}
     }
     #endif
     if(u_debugView>0.){
@@ -182,10 +193,6 @@ void main(){
         #endif
         if(debugFootprint==0.)color=vec3(0);
         out_FragColor=vec4(color,1);return;
-    }
-    if(u_atmosphere&&acc.a>.0001){
-        vec3 airL,airT;integrateAtmosphere(u_camera,d,weightedDistance/acc.a,12,airL,airT);
-        acc.rgb=acc.rgb*airT+airL*acc.a;
     }
     // Linear half-float where supported; encoded RGBA8 is the portable fallback.
     out_FragColor=vec4(storeCloudRadiance(acc.rgb),acc.a);

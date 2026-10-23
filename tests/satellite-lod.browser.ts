@@ -6,13 +6,14 @@ import transport from '../src/effects/hillaire-atmosphere/shaders/integrate.glsl
 import environment from '../src/effects/hillaire-atmosphere/shaders/sky-irradiance-sample.glsl?raw';
 import lighting from '../src/effects/global-clouds/shaders/droplet-lighting.glsl?raw';
 import march from '../src/effects/global-clouds/shaders/march.glsl?raw';
+import cloudTransport from '../src/effects/global-clouds/shaders/transport.glsl?raw';
 const output=document.querySelector('#result')!;
 const gpu=cloudProbe(document.querySelector<HTMLCanvasElement>('#probe')!);
 try{
   const footprint=17000*2*Math.tan(Math.PI/6)/(1080*.65);
   const header='#define LAYERED_CLOUDS\n#define LIGHT_STEPS 5\n#define CLOUD_STEPS 64\n#define CLOUD_SUBSTEPS 3\n'+common+transport+density+voxel+
     'vec3 u_camera;uniform vec3 u_moon;uniform bool u_atmosphere;uniform float u_moonFraction,u_moonGain,u_pixelAngle,u_debugView;float debugFootprint=0.,debugPathLength=0.,debugWeather=0.,debugWeatherLength=0.;struct CloudPhases{vec3 sun;vec3 moon;};'+environment+lighting+
-    'vec3 cloudSource(vec3 light){return light;}'+march.slice(march.indexOf('void integrateCloud'),march.indexOf('void main()'));
+    'vec3 cloudSource(vec3 light){return light;}'+cloudTransport+march.slice(march.indexOf('CloudSegment integrateCloud'),march.indexOf('void main()'));
   const main=`uniform float u_grid,u_footprint,u_reference,u_steps,u_statistics;void main(){
     float patchIndex=floor((gl_FragCoord.x-.5)/u_grid);float lon=-1.7+patchIndex*.37,lat=.45+sin(patchIndex*1.7)*.6;
     vec3 n=vec3(cos(lat)*cos(lon),cos(lat)*sin(lon),sin(lat));
@@ -23,8 +24,8 @@ try{
     cloudScreenRight=east;cloudScreenUp=north;
     u_camera=n*(Rg+u_base+u_thickness+17000.);
     if(u_reference<.5){
-      vec4 acc=vec4(0);float distance=0.;integrateCloud(-n,vec2(17000.,17000.+u_thickness),acc,distance);
-      out_FragColor=vec4(acc.rgb,1.-acc.a);
+      CloudSegment acc=integrateCloud(-n,vec2(17000.,17000.+u_thickness));
+      out_FragColor=vec4(acc.L,acc.cloudT);
       if(u_statistics>.5)out_FragColor=vec4(farMoments.a,debugMipA,debugMipB,1.);
       return;
     }

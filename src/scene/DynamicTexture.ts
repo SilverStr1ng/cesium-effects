@@ -8,7 +8,7 @@ export interface GpuTexture {
 }
 
 /** WebGL2 hardware trilinear, repeat-wrapped noise volume (four channels). */
-export function createRepeatingVolume(scene: Cesium.Scene, size: number, bytes: Uint8Array, mipLevels?:Uint8Array[]): GpuTexture {
+export function createRepeatingVolume(scene: Cesium.Scene, size: number, bytes: Uint8Array, mipLevels?:Uint8Array[],dimensions?:[number,number,number]): GpuTexture {
   const api=Cesium as unknown as {
     Texture3D:new(options:object)=>GpuTexture;
     Sampler:new(options:object)=>unknown;
@@ -17,7 +17,7 @@ export function createRepeatingVolume(scene: Cesium.Scene, size: number, bytes: 
   };
   const {context}=scene as unknown as {context:unknown};
   return new api.Texture3D({context,flipY:false,
-    source:{width:size,height:size,depth:size,arrayBufferView:bytes,mipLevels},
+    source:{width:dimensions?.[0]??size,height:dimensions?.[1]??size,depth:dimensions?.[2]??size,arrayBufferView:bytes,mipLevels},
     sampler:new api.Sampler({wrapS:api.TextureWrap.REPEAT,wrapT:api.TextureWrap.REPEAT,wrapR:api.TextureWrap.REPEAT,
       minificationFilter:mipLevels?api.TextureMinificationFilter.LINEAR_MIPMAP_LINEAR:api.TextureMinificationFilter.LINEAR}),
   });
@@ -31,6 +31,13 @@ export function createWeatherTexture(scene:Cesium.Scene,width:number,height:numb
   const api=Cesium as unknown as {Texture:new(options:object)=>GpuTexture;Sampler:new(options:object)=>unknown;TextureWrap:{REPEAT:number;CLAMP_TO_EDGE:number}};
   return new api.Texture({context:(scene as unknown as {context:unknown}).context,flipY:false,
     source:{width,height,arrayBufferView:bytes},sampler:new api.Sampler({wrapS:api.TextureWrap.REPEAT,wrapT:api.TextureWrap.CLAMP_TO_EDGE})});
+}
+
+/** Repeat-wrapped optical statistics, including a supplied linear mip chain. */
+export function createRepeatingTexture(scene:Cesium.Scene,size:number,bytes:Uint8Array,mipLevels:Uint8Array[]):GpuTexture {
+  const api=Cesium as unknown as {Texture:new(options:object)=>GpuTexture;Sampler:new(options:object)=>unknown;TextureWrap:{REPEAT:number};TextureMinificationFilter:{LINEAR_MIPMAP_LINEAR:number}};
+  return new api.Texture({context:(scene as unknown as {context:unknown}).context,flipY:false,
+    source:{width:size,height:size,arrayBufferView:bytes,mipLevels},sampler:new api.Sampler({wrapS:api.TextureWrap.REPEAT,wrapT:api.TextureWrap.REPEAT,minificationFilter:api.TextureMinificationFilter.LINEAR_MIPMAP_LINEAR})});
 }
 
 /**

@@ -23,3 +23,15 @@ test('cirrus mip chain preserves already-shaped extinction',()=>{
   for(const channel of [0,1,2])for(const mip of mips)
     assert.ok(Math.abs(mean(bytes,channel)-mean(mip,channel))<1.5,'optical mass must survive every mip');
 });
+test('ice transverse mip atlas preserves longitudinal structure and optical statistics',()=>{
+  const {bytes,anisotropic,ribbon,ribbonMips}=createCirrusField();
+  assert.equal(anisotropic.length,127*64*64*4);
+  assert.equal(ribbonMips.at(-1)!.length,4);
+  for(const y of [0,13,31,63])for(const z of [0,19,45,63])for(let c=0;c<4;c++){
+    let sum=0;for(let x=0;x<64;x++)sum+=bytes[(x+64*(y+64*z))*4+c];
+    assert.ok(Math.abs(anisotropic[(126+127*(y+64*z))*4+c]-sum/64)<2);
+    assert.ok(Math.abs(ribbon[(y+64*z)*4+c]-sum/64)<=.5);
+  }
+  const values=Array.from(ribbon).filter((_,i)=>i%4===0);
+  assert.ok(Math.max(...values)-Math.min(...values)>32,'collapsing the transverse axis must not collapse the whole cloud band');
+});

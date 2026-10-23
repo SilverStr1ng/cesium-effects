@@ -3,7 +3,7 @@ import type {EffectContext,SceneEffect} from '../types';
 import {cloudDefaults,cloudQualities,type CloudParameters,type CloudQuality,type CloudView} from './config';
 import {createWeather,WEATHER_WIDTH,WEATHER_HEIGHT} from './WeatherField';
 import {createCumulusNoise,CUMULUS_NOISE_SIZE} from './CumulusNoise';
-import {createRepeatingVolume,createWeatherTexture,type GpuTexture} from '../../scene/DynamicTexture';
+import {createRepeatingVolume,createRepeatingTexture,createWeatherTexture,type GpuTexture} from '../../scene/DynamicTexture';
 import {POLAR_SCALE} from '../hillaire-atmosphere/atmosphereMath';
 import density from './shaders/density.glsl?raw';
 import voxel from './shaders/voxel.glsl?raw';
@@ -11,6 +11,7 @@ import {VOXEL_SIZE} from './VoxelCloudField';
 import {CLOUD_OPTICS_SIZE} from './CloudOptics';
 import {createCirrusField} from './CirrusField';
 import march from './shaders/march.glsl?raw';
+import cloudTransport from './shaders/transport.glsl?raw';
 import intervals from './shaders/intervals.glsl?raw';
 import lighting from './shaders/droplet-lighting.glsl?raw';
 import resolve from './shaders/resolve.glsl?raw';
@@ -57,6 +58,8 @@ export class GlobalCloudEffect implements SceneEffect {
   private voxels?:GpuTexture;
   private optics?:GpuTexture;
   private cirrus?:GpuTexture;
+  private iceRibbon?:GpuTexture;
+  private iceAnisotropic?:GpuTexture;
   private voxelWorker?:Worker;
   private finishReady?:()=>void;
   ready:Promise<void>=Promise.resolve();
@@ -90,6 +93,8 @@ export class GlobalCloudEffect implements SceneEffect {
       u_evolution:()=>this.evolution,u_windSpeed:()=>this.parameters.wind,u_sun:()=>this.sun,
       u_cloudType:()=>this.parameters.type,u_highCoverage:()=>this.parameters.highCoverage,
       u_highBase:()=>this.parameters.highBase,u_highThickness:()=>this.parameters.highThickness,
+      u_highType:()=>this.parameters.highType,u_highOpticalDepth:()=>this.parameters.highOpticalDepth,
+      u_highAnisotropy:()=>this.parameters.highAnisotropy,u_highAlbedo:()=>this.parameters.highAlbedo,u_highMultiple:()=>this.parameters.highMultiple,
       u_highAngle:()=>this.highWindAngle};
   }
   mount(context:EffectContext){
@@ -99,6 +104,8 @@ export class GlobalCloudEffect implements SceneEffect {
     this.noise=createRepeatingVolume(scene,CUMULUS_NOISE_SIZE,noise.bytes,noise.mips);
     if(this.id==='global-clouds'){
       const ice=createCirrusField();this.cirrus=createRepeatingVolume(scene,CUMULUS_NOISE_SIZE,ice.bytes,ice.mips);
+      this.iceRibbon=createRepeatingTexture(scene,CUMULUS_NOISE_SIZE,ice.ribbon,ice.ribbonMips);
+      this.iceAnisotropic=createRepeatingVolume(scene,64,ice.anisotropic,undefined,[127,64,64]);
       this.ready=new Promise(resolve=>{this.finishReady=resolve;});
       try{
         const worker=new Worker(new URL('./voxel.worker.ts',import.meta.url),{type:'module'});this.voxelWorker=worker;
@@ -152,7 +159,7 @@ export class GlobalCloudEffect implements SceneEffect {
       fragmentShader:`#define CLOUD_STEPS ${quality.steps}\n#define LIGHT_STEPS ${quality.lightSteps}\n#define CLOUD_SUBSTEPS ${quality.substeps}\n`+(this.model.defines??'')+outputSource+atmosphereTransport+this.model.density+
         `uniform sampler2D depthTexture;uniform bool u_atmosphere;uniform vec3 u_camera,u_moon;
         uniform float u_pixelAngle,u_moonFraction,u_moonGain;struct CloudPhases {vec3 sun;vec3 moon;};`+
-        skyIrradiance+this.model.lighting+'\n#ifdef LAYERED_CLOUDS\n'+intervals+'\n#endif\n'+march,
+        skyIrradiance+this.model.lighting+'\n#ifdef LAYERED_CLOUDS\n'+intervals+'\n#endif\n'+cloudTransport+march,
       sampleMode:PostProcessStageSampleMode.LINEAR,
       uniforms:{...this.uniforms(),
         // Cesium 1.146 allocates by each stage's immediate dependencies, not
@@ -164,6 +171,9 @@ export class GlobalCloudEffect implements SceneEffect {
         u_voxels:()=>this.voxels??this.noise!,u_voxelReady:()=>Boolean(this.voxels&&this.voxelEnabled),u_skipVoxels:()=>this.skipVoxels,
         u_cloudOptics:()=>this.optics??this.noise!,u_opticsReady:()=>Boolean(this.optics&&this.voxelEnabled),u_columnGrid:12,
         u_cirrus:()=>this.cirrus??this.noise!,
+        u_iceRibbon:()=>this.iceRibbon??this.weather!,
+        u_iceAnisotropic:()=>this.iceAnisotropic??this.noise!,
+        u_highFilterGrid:4,
         u_multiple:()=>this.light?.multipleScattering?.()??this.weather!,u_medium:()=>this.light?.medium?.()??this.defaultMedium,
         u_skyIrradiance:()=>this.light?.skyIrradiance?.()??this.weather!,u_hasSkyIrradiance:()=>Boolean(this.light?.skyIrradiance?.()),
         u_exposure:()=>this.light?.exposure?.()??8,
@@ -186,6 +196,8 @@ export class GlobalCloudEffect implements SceneEffect {
     // Disjoint shells make exact front-to-back interval ordering inexpensive.
     v.highBase=Math.max(v.base+v.thickness+.5,Math.min(32,v.highBase));
     v.highThickness=Math.max(.3,Math.min(4,v.highThickness));v.highWind=Math.max(0,Math.min(200,v.highWind));
+    v.highType=Math.round(Math.max(0,Math.min(1,v.highType)));v.highOpticalDepth=Math.max(0,Math.min(2,v.highOpticalDepth));
+    v.highAnisotropy=Math.max(0,Math.min(.9,v.highAnisotropy));v.highAlbedo=Math.max(0,Math.min(1,v.highAlbedo));v.highMultiple=Math.max(0,Math.min(.3,v.highMultiple));
     if(v.seed!==seed&&this.weather)this.weather.copyFrom({source:{width:WEATHER_WIDTH,height:WEATHER_HEIGHT,arrayBufferView:createWeather(v.seed)}});
   }
   setQuality(value:CloudQuality){if(this.quality===value)return;this.quality=value;this.buildStage();}
@@ -214,7 +226,7 @@ export class GlobalCloudEffect implements SceneEffect {
     this.voxelWorker?.terminate();this.voxelWorker=undefined;this.finishReady?.();this.finishReady=undefined;
     const s=this.context.viewer.scene;if(this.stage)s.postProcessStages.remove(this.stage);
     this.resolveStage=undefined;
-    for(const t of [this.noise,this.weather,this.voxels,this.optics,this.cirrus])if(t&&!t.isDestroyed())t.destroy();this.voxels=undefined;this.optics=undefined;this.cirrus=undefined;
+    for(const t of [this.noise,this.weather,this.voxels,this.optics,this.cirrus,this.iceRibbon,this.iceAnisotropic])if(t&&!t.isDestroyed())t.destroy();this.voxels=undefined;this.optics=undefined;this.cirrus=undefined;this.iceRibbon=undefined;this.iceAnisotropic=undefined;
     this.context=undefined;
   }
 }
