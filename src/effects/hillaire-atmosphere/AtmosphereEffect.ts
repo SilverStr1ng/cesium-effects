@@ -11,7 +11,9 @@ import skyParameters from './shaders/sky-view-parameters.glsl?raw';
 import irradiance from './shaders/sky-irradiance.glsl?raw';
 import composite from './shaders/composite.glsl?raw';
 import display from '../../scene/display.glsl?raw';
-import {celestialPositions,observerCelestials} from './CelestialLighting';
+import {celestialPositions,celestialIcrfReady,lunarFixedFromEcef,resolveCelestialState,type CelestialState} from './CelestialLighting';
+import {LunarAlbedo} from './LunarAlbedo';
+import {emptySceneDepth} from '../../scene/sceneDepth';
 
 export class AtmosphereEffect implements SceneEffect {
   readonly id='hillaire-atmosphere';
@@ -20,17 +22,26 @@ export class AtmosphereEffect implements SceneEffect {
   constructor(private options:{hdr?:boolean}={}){}
   readonly parameters={...atmosphereDefaults};
   readonly sunDirection=new Cartesian3();
+  /** Camera-independent geocentric light directions in the atmosphere metric. */
   readonly moonDirection=new Cartesian3();
+  celestialState?:CelestialState;
+  get moonLightFraction(){return this.celestialState?.lighting.moonFraction??0;}
+  get moonFraction(){return this.celestialState?.observer.moonFraction??0;}
+  get lunarTextureInfo(){return this.albedo?.info;}
+  get lunarTexture(){return this.albedo?.texture;}
+  ready:Promise<void>=Promise.resolve();
+  private albedo?:LunarAlbedo;
+  private moonFixedFromEcef=new Matrix3();
   private sunDiscDirection=new Cartesian3();
   private moonDiscDirection=new Cartesian3();
   private moonSunDirection=new Cartesian3();
   clockLinked=true;
-  moonFraction=0;
   private sunRadius=.00465;
   private moonRadius=.0045;
   private moonPosition=new Cartesian3();
   private sunPosition=new Cartesian3();
   private lastCelestialTime?:JulianDate;
+  private waitingForIcrf=true;
   private removeClock?:()=>void;
   enabled=true;
   private context?: EffectContext;
@@ -55,6 +66,7 @@ export class AtmosphereEffect implements SceneEffect {
   mount(context:EffectContext){
     this.context=context;
     const s=context.viewer.scene;
+    this.albedo=new LunarAlbedo(s);this.ready=this.albedo.ready;
     this.previous={sky:s.skyAtmosphere?.show??false,ground:s.globe.showGroundAtmosphere,fog:s.fog.enabled,sun:s.sun?.show??false,moon:s.moon?.show??false,light:s.light,lighting:s.globe.enableLighting,fadeIn:s.globe.lightingFadeInDistance,fadeOut:s.globe.lightingFadeOutDistance};
     if(s.skyAtmosphere)s.skyAtmosphere.show=false;
     s.globe.showGroundAtmosphere=false;s.fog.enabled=false;
@@ -75,7 +87,12 @@ export class AtmosphereEffect implements SceneEffect {
     const radiance=new PostProcessStage({name:this.radianceStageName,pixelDatatype:hdr?PixelDatatype.HALF_FLOAT:PixelDatatype.UNSIGNED_BYTE,
       fragmentShader:(hdr?'#define SKY_HDR\n':'')+common+skyParameters+display+integrate+composite,
       uniforms:{...view,u_skyView:()=>this.sky!.texture,u_exposure:()=>this.parameters.exposure,
+        u_emptySceneDepth:()=>emptySceneDepth(s),
         u_sunRadius:()=>this.sunRadius*this.parameters.sunScale,u_sunDisc:()=>this.sunDiscDirection,u_moonDisc:()=>this.moonDiscDirection,
+        u_sunBrightness:()=>this.parameters.sunBrightness,u_sunHaloRadius:()=>this.sunRadius*this.parameters.sunHaloScale,
+        u_sunHaloBrightness:()=>this.parameters.sunHaloBrightness,u_moonHaloRadius:()=>this.moonRadius*this.parameters.moonHaloScale,
+        u_moonHaloBrightness:()=>this.parameters.moonHaloBrightness,
+        u_moonAlbedo:()=>this.albedo!.texture,u_moonAlbedoMean:()=>this.albedo!.mean,u_moonFixedFromEcef:()=>this.moonFixedFromEcef,
         u_moonSun:()=>this.moonSunDirection,
         u_moonRadius:()=>this.moonRadius*this.parameters.moonScale,u_moonBrightness:()=>this.parameters.moonBrightness}});
     const output=new PostProcessStage({name:'hillaire-atmosphere-display',fragmentShader:common+display+`
@@ -93,8 +110,12 @@ export class AtmosphereEffect implements SceneEffect {
   private updateCelestial(){
     if(!this.context)return;
     const viewer=this.context.viewer,time=viewer.clock.currentTime;
-    if(!this.lastCelestialTime||Math.abs(JulianDate.secondsDifference(time,this.lastCelestialTime))>=1){
+    // Cesium loads the ICRF rotation asynchronously. A paused clock must still
+    // replace the initial TEME approximation once that rotation becomes ready.
+    if(!this.lastCelestialTime||Math.abs(JulianDate.secondsDifference(time,this.lastCelestialTime))>=1||this.waitingForIcrf&&celestialIcrfReady(time)){
       const bodies=celestialPositions(time);Cartesian3.clone(bodies.moon,this.moonPosition);Cartesian3.clone(bodies.sun,this.sunPosition);
+      this.waitingForIcrf=bodies.frame==='teme-fallback';
+      Matrix3.clone(lunarFixedFromEcef(time),this.moonFixedFromEcef);
       this.lastCelestialTime=JulianDate.clone(time);
     }
     if(this.clockLinked){
@@ -110,12 +131,13 @@ export class AtmosphereEffect implements SceneEffect {
         this.parameters.elevation=CesiumMath.toDegrees(Math.asin(up));
         this.parameters.azimuth=(CesiumMath.toDegrees(Math.atan2(east,north))+360)%360;
     }
-    const state=observerCelestials({sun:this.sunPosition,moon:this.moonPosition},viewer.camera.positionWC,
+    this.celestialState=resolveCelestialState({sun:this.sunPosition,moon:this.moonPosition},viewer.camera.positionWC,
       this.clockLinked?undefined:Cartesian3.negate(this.light.direction,new Cartesian3()));
-    this.sunRadius=state.sunRadius;this.moonRadius=state.moonRadius;this.moonFraction=state.moonFraction;
+    const state=this.celestialState.observer;
+    this.sunRadius=state.sunRadius;this.moonRadius=state.moonRadius;
     Cartesian3.clone(state.sunDirection,this.sunDiscDirection);Cartesian3.clone(state.moonDirection,this.moonDiscDirection);
     Cartesian3.clone(state.moonSunDirection,this.moonSunDirection);
-    const relative=Cartesian3.clone(state.moonDirection);
+    const relative=Cartesian3.clone(this.celestialState.lighting.moonDirection);
     relative.z*=POLAR_SCALE;Cartesian3.normalize(relative,this.moonDirection);
   }
   setClockLinked(value:boolean){this.clockLinked=value;if(!value)this.updateParameters({});this.updateCelestial();}
@@ -182,6 +204,7 @@ export class AtmosphereEffect implements SceneEffect {
     s.primitives.remove(this.primitive);
     if(this.stage)s.postProcessStages.remove(this.stage);
     this.sky?.destroy();this.irradiance?.destroy();this.multiple?.destroy();this.transmittance?.destroy();
+    this.albedo?.destroy();
     if(this.previous){const p=this.previous;if(s.skyAtmosphere)s.skyAtmosphere.show=p.sky;s.globe.showGroundAtmosphere=p.ground;s.fog.enabled=p.fog;if(s.sun)s.sun.show=p.sun;if(s.moon)s.moon.show=p.moon;s.light=p.light;s.globe.enableLighting=p.lighting;s.globe.lightingFadeInDistance=p.fadeIn;s.globe.lightingFadeOutDistance=p.fadeOut;}
     this.context=undefined;
   }

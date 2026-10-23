@@ -1,13 +1,19 @@
 uniform sampler2D colorTexture;
 uniform sampler2D depthTexture;
+uniform bool u_emptySceneDepth;
 uniform sampler2D u_skyView;
 uniform vec3 u_camera;
 uniform mat3 u_basis;
 uniform float u_exposure;
 uniform float u_sunRadius;
+uniform float u_sunBrightness,u_sunHaloRadius,u_sunHaloBrightness;
+uniform float u_moonHaloRadius,u_moonHaloBrightness;
 uniform vec3 u_sunDisc,u_moonDisc,u_moonSun;
 uniform float u_moonRadius;
 uniform float u_moonBrightness;
+uniform sampler2D u_moonAlbedo;
+uniform float u_moonAlbedoMean;
+uniform mat3 u_moonFixedFromEcef;
 in vec2 v_textureCoordinates;
 void main(){
     vec4 background=texture(colorTexture,v_textureCoordinates);
@@ -15,7 +21,7 @@ void main(){
     // Do not divide by w: at an effectively infinite far plane it may round to zero.
     vec3 dirWC=mat3(czm_inverseView)*normalize(eye.xyz);
     vec3 scaledDirection=dirWC*vec3(1,1,1.00336409),direction=normalize(scaledDirection);
-    float depth=texture(depthTexture,v_textureCoordinates).r,maximum=1e7;
+    float depth=u_emptySceneDepth?1.:texture(depthTexture,v_textureCoordinates).r,maximum=1e7;
     bool surface=depth>0.&&depth<1.;
     // Camera/rays use the ellipsoid-scaled atmosphere sphere. The world-space
     // depth must use that same ray metric; at orbit the omitted factor truncates
@@ -45,11 +51,17 @@ void main(){
         float pixel=max(length(dFdx(dirWC)),length(dFdy(dirWC)));
         float edge=max(pixel*.65,u_sunRadius*.015);
         float disk=1.-smoothstep(u_sunRadius-edge,u_sunRadius+edge,angle);
-        float halo=exp(-angle/max(.001,u_sunRadius)*.75)*.32;
-        sky+=(disk*8.+halo*.12)*sunTransmission(u_transmittance,u_camera,u_sun)*vec3(1.,.94,.83);
+        // Disc, artistic halo and brightness have separate display controls.
+        // T belongs to THIS pixel's ray: an enlarged solar disc can straddle the
+        // real horizon even when its centre is below it. No centre-ray shortcut.
+        float halo=exp(-angle/max(.001,u_sunHaloRadius)*.75)*.0384*u_sunHaloBrightness;
+        sky+=(disk*8.*u_sunBrightness+halo)*T*vec3(1.,.94,.83);
         // A lit sphere projected onto the Moon's apparent disc gives the lunar phase.
         float moonAngle=atan(length(cross(dirWC,u_moonDisc)),dot(dirWC,u_moonDisc));
         float moonEdge=max(pixel*.65,u_moonRadius*.015);
+        float phase=clamp((1.-dot(u_moonDisc,u_moonSun))*.5,0.,1.);
+        // Optional artistic glow (off by default), not physical lunar scattering.
+        sky+=exp(-moonAngle/max(.001,u_moonHaloRadius)*.75)*.0003*u_moonHaloBrightness*phase*T;
         if(moonAngle<u_moonRadius+moonEdge){
             vec3 right=normalize(cross(abs(u_moonDisc.z)>.99?vec3(0,1,0):vec3(0,0,1),u_moonDisc));
             vec3 up=cross(u_moonDisc,right);
@@ -58,15 +70,20 @@ void main(){
             float mu=sqrt(max(0.,1.-rr));
             vec3 normal=right*uv.x+up*uv.y-u_moonDisc*mu;
             float lit=max(0.,dot(normal,u_moonSun));
-            float maria=.82+.08*sin(uv.x*17.+sin(uv.y*23.))+.06*sin(uv.y*29.+uv.x*11.);
+            vec3 lunar=u_moonFixedFromEcef*normalize(normal);
+            vec2 mapUV=vec2(.5+atan(lunar.y,lunar.x)/(2.*PI),.5-asin(clamp(lunar.z,-1.,1.))/PI);
+            // Explicit analytic footprint: branch boundaries cannot supply valid
+            // implicit derivatives. Increase mip toward limb and map poles.
+            float mapFootprint=float(textureSize(u_moonAlbedo,0).x)*pixel/
+                (2.*PI*sin(u_moonRadius)*max(.05,mu)*max(.05,length(lunar.xy)));
+            vec3 albedo=textureLod(u_moonAlbedo,mapUV,max(0.,log2(mapFootprint))).rgb*(.82/max(.001,u_moonAlbedoMean));
             // Display adaptation is applied to lunar radiance as well as the sky.
             // Preserve the terminator/phase, with only a small earthshine floor.
             // Lunar regolith is closer to Lommel-Seeliger than a Lambert sphere:
             // keep the full-moon limb readable while preserving the terminator.
             float regolith=.75*(2.*lit/max(.02,lit+mu))+.25*lit;
-            float phase=clamp((1.-dot(u_moonDisc,u_moonSun))*.5,0.,1.);
             float earthshine=.0006*(1.-phase);
-            vec3 moonRadiance=vec3(.91,.94,1.)*(earthshine+regolith*.06)*maria*sunTransmission(u_transmittance,u_camera,direction);
+            vec3 moonRadiance=(earthshine+regolith*.06)*albedo*T;
             vec3 moon=moonRadiance*u_moonBrightness;
             sky=mix(sky,L+moon,1.-smoothstep(u_moonRadius-moonEdge,u_moonRadius+moonEdge,moonAngle));
         }

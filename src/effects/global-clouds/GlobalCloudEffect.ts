@@ -21,9 +21,12 @@ import display from '../../scene/display.glsl?raw';
 import atmosphereCommon from '../hillaire-atmosphere/shaders/common.glsl?raw';
 import atmosphereTransport from '../hillaire-atmosphere/shaders/integrate.glsl?raw';
 import skyIrradiance from '../hillaire-atmosphere/shaders/sky-irradiance-sample.glsl?raw';
+import {emptySceneDepth} from '../../scene/sceneDepth';
 
 export interface CloudLighting {
   sunDirection:()=>Cartesian3;
+  /** Same active celestial mode as the disc, but independent of the camera.
+   * The application supplies geocentric distant-source lunar lighting. */
   moonDirection:()=>Cartesian3;
   moonFraction:()=>number;
   transmittance:()=>GpuTexture|undefined;
@@ -91,6 +94,7 @@ export class GlobalCloudEffect implements SceneEffect {
       u_thickness:()=>this.parameters.thickness,u_coverage:()=>this.parameters.coverage,u_density:()=>this.parameters.density,
       u_detail:()=>this.parameters.detail,u_seed:()=>this.parameters.seed,u_windAngle:()=>this.windAngle,
       u_evolution:()=>this.evolution,u_windSpeed:()=>this.parameters.wind,u_sun:()=>this.sun,
+      u_emptySceneDepth:()=>this.context?emptySceneDepth(this.context.viewer.scene):false,
       u_cloudType:()=>this.parameters.type,u_highCoverage:()=>this.parameters.highCoverage,
       u_highBase:()=>this.parameters.highBase,u_highThickness:()=>this.parameters.highThickness,
       u_highType:()=>this.parameters.highType,u_highOpticalDepth:()=>this.parameters.highOpticalDepth,
@@ -180,6 +184,7 @@ export class GlobalCloudEffect implements SceneEffect {
         u_moon:()=>this.light?.moonDirection()??Cartesian3.UNIT_Z,u_moonFraction:()=>this.light?.moonFraction()??0,u_moonGain:()=>this.moonLight,
         u_transmittance:()=>this.light?.transmittance()??this.weather!,u_atmosphere:()=>Boolean(this.light?.atmosphereEnabled()&&this.light.transmittance()&&this.light.multipleScattering?.())}});
     const output=new PostProcessStage({name:`${this.id}-resolve`,fragmentShader:outputSource+resolve,uniforms:{
+      u_emptySceneDepth:()=>emptySceneDepth(this.context!.viewer.scene),
       u_clouds:volume.name,u_exposure:()=>this.light?.exposure?.()??8,u_debugView:()=>cloudDebugViews.indexOf(this.debugView),
       u_skyRadiance:this.light?.backgroundStage&&this.light.atmosphereEnabled()?this.light.backgroundStage:volume.name,
       u_skyRadianceHdr:()=>this.light?.backgroundIsHdr?.()??false,

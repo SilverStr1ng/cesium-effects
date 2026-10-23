@@ -1,8 +1,9 @@
 uniform sampler2D colorTexture,depthTexture,u_clouds,u_skyRadiance;
 uniform bool u_hasSkyRadiance,u_skyRadianceHdr;
+uniform bool u_emptySceneDepth;
 uniform float u_debugView;
 in vec2 v_textureCoordinates;
-float distanceAt(vec2 uv){float depth=texture(depthTexture,uv).r;if(depth<=0.||depth>=1.)return 1e10;vec4 p=czm_windowToEyeCoordinates(uv*czm_viewport.zw+czm_viewport.xy,depth);return length(p.xyz/p.w);}
+float distanceAt(vec2 uv){if(u_emptySceneDepth)return 1e10;float depth=texture(depthTexture,uv).r;if(depth<=0.||depth>=1.)return 1e10;vec4 p=czm_windowToEyeCoordinates(uv*czm_viewport.zw+czm_viewport.xy,depth);return length(p.xyz/p.w);}
 void main(){
     if(u_debugView>0.){out_FragColor=vec4(texture(u_clouds,v_textureCoordinates).rgb,1);return;}
     vec2 size=vec2(textureSize(u_clouds,0)),p=v_textureCoordinates*size,base=floor(p);

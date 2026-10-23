@@ -77,6 +77,7 @@ try{
   const cesium=`const mat4 czm_inverseProjection=mat4(.001,0,0,0,0,.001,0,0,0,0,1,0,0,0,0,1),czm_inverseView=mat4(1);const vec4 czm_viewport=vec4(0,0,1,1);
     vec4 czm_windowToEyeCoordinates(vec2 uv,float depth){return vec4(0,0,1,1);}`;
   const solarUniforms={u_camera:[0,0,23378.137],u_medium:[0,0,0],u_sun:[0,0,1],u_sunDisc:[0,0,1],u_sunRadius:.01302,
+    u_sunBrightness:1,u_sunHaloRadius:.01302,u_sunHaloBrightness:1,
     u_moonDisc:[1,0,0],u_moonSun:[0,0,1],u_moonRadius:.01,u_moonBrightness:2.4,u_exposure:8};
   const hdrCases=[true,false].map(hdr=>{
     const sky=gpu.draw((hdr?'#define SKY_HDR\n':'')+cesium+common+skyParameters+display+transport+composite,1,1,solarUniforms,

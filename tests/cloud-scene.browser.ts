@@ -10,6 +10,8 @@ import {cloudComparisonView} from '../src/effects/water-clouds/comparisonView';
 import type {CloudQuality} from '../src/effects/global-clouds/config';
 import {highCloudPresets} from '../src/effects/global-clouds/config';
 import {celestialPositions} from '../src/effects/hillaire-atmosphere/CelestialLighting';
+import {horizonView} from './celestialTerrain';
+import {prepareCelestialFrame} from './celestialFixture';
 
 const status=document.querySelector('#status')!;
 try{
@@ -31,6 +33,7 @@ try{
   viewer.resolutionScale=1;
   viewer.clock.shouldAnimate=false;
   viewer.clock.currentTime=JulianDate.fromIso8601(query.get('time')??'2026-06-21T17:00:00Z');
+  await prepareCelestialFrame(viewer.clock.currentTime);
   // Cesium's fov is horizontal in landscape. Pin the vertical angle explicitly.
   const fovy=CesiumMath.toRadians(Number(query.get('fov')??45));
   const frustum=viewer.camera.frustum as PerspectiveFrustum;
@@ -40,10 +43,13 @@ try{
   await setMap('natural');
   const atmosphere=new AtmosphereEffect({hdr:query.get('storage')!=='rgba8'});atmosphere.mount({viewer,onStatus:console.info});
   atmosphere.updateParameters({exposure:8});
+  // These optional display fields are deliberately separate from CloudLighting.
+  for(const key of ['sunScale','moonScale','sunBrightness','moonBrightness','sunHaloScale','sunHaloBrightness','moonHaloScale','moonHaloBrightness'] as const)
+    if(query.has(key))atmosphere.updateParameters({[key]:Number(query.get(key))});
   if(query.has('manualSun')){atmosphere.setClockLinked(false);atmosphere.updateParameters({elevation:Number(query.get('manualSun')),azimuth:245});}
   const model=query.get('model')??'cellular';
   const clouds=new (model==='water'?WaterCloudEffect:GlobalCloudEffect)({sunDirection:()=>atmosphere.sunDirection,moonDirection:()=>atmosphere.moonDirection,
-    moonFraction:()=>atmosphere.moonFraction,transmittance:()=>atmosphere.transmissionTexture,atmosphereEnabled:()=>atmosphere.enabled,
+    moonFraction:()=>atmosphere.moonLightFraction,transmittance:()=>atmosphere.transmissionTexture,atmosphereEnabled:()=>atmosphere.enabled,
     multipleScattering:()=>atmosphere.multipleScatteringTexture,medium:()=>atmosphere.mediumParameters,exposure:()=>atmosphere.parameters.exposure,
     skyIrradiance:()=>atmosphere.skyIrradianceTexture,
     backgroundStage:atmosphere.radianceStageName,backgroundIsHdr:()=>atmosphere.renderTargetMode==='RGBA16F'});
@@ -52,7 +58,7 @@ try{
   clouds.setMotion({angle:0,highAngle:0,evolution:0});
   let removeProfiler=()=>{};
   window.addEventListener('pagehide',()=>{removeProfiler();clouds.destroy();atmosphere.destroy();viewer.destroy();},{once:true});
-  status.textContent='生成三维密度与距离场…';await clouds.ready;
+  status.textContent='生成三维密度与距离场…';await clouds.ready;await atmosphere.ready;
   const assetsReadyMs=performance.now()-initializationStart;
   if(viewer.isDestroyed())throw new Error('Fixture disposed during voxel preparation');
   if(query.get('voxels')==='off')clouds.setVoxelEnabled(false);
@@ -85,15 +91,16 @@ try{
     const right=Cartesian3.normalize(Cartesian3.cross(Cartesian3.UNIT_Z,direction,new Cartesian3()),new Cartesian3());
     viewer.camera.setView({destination,orientation:{direction,up:Cartesian3.cross(direction,right,new Cartesian3())}});
   }
+  const terrainFixture=view==='moon-horizon'||view==='sun-horizon'?horizonView(viewer,celestialPositions(viewer.clock.currentTime)[view==='sun-horizon'?'sun':'moon'],query.get('terrain')==='ridge'):undefined;
   const gl=(viewer.scene as unknown as {context:{_gl:WebGL2RenderingContext}}).context._gl;
   const debug=gl.getExtension('WEBGL_debug_renderer_info');
-  const state=()=>({initialization:{mountMs,assetsReadyMs},utc:JulianDate.toIso8601(viewer.clock.currentTime),atmosphere:{...atmosphere.parameters,storage:atmosphere.renderTargetMode??'RGBA8',clockLinked:atmosphere.clockLinked,moonFraction:atmosphere.moonFraction},
+  const state=()=>({initialization:{mountMs,assetsReadyMs},terrainFixture,utc:JulianDate.toIso8601(viewer.clock.currentTime),atmosphere:{...atmosphere.parameters,storage:atmosphere.renderTargetMode??'RGBA8',clockLinked:atmosphere.clockLinked,moonFraction:atmosphere.moonFraction,moonLightFraction:atmosphere.moonLightFraction,lunarTexture:atmosphere.lunarTextureInfo,discGeometry:atmosphere.celestialState?.observer},
     clouds:{model,voxels:clouds.voxelReady&&query.get('voxels')!=='off',storage:clouds.renderTargetMode,moonLight:clouds.moonLight,quality:clouds.quality,parameters:{...clouds.parameters},motion:clouds.motion},
     camera:{position:Cartesian3.pack(viewer.camera.positionWC,[]),direction:Cartesian3.pack(viewer.camera.directionWC,[]),up:Cartesian3.pack(viewer.camera.upWC,[]),fovy:frustum.fovy},
     drawingBuffer:[gl.drawingBufferWidth,gl.drawingBufferHeight],renderer:debug?gl.getParameter(debug.UNMASKED_RENDERER_WEBGL):gl.getParameter(gl.RENDERER)});
   removeProfiler=attachFrameProfiler(viewer,state);
   const metadata=document.createElement('pre');metadata.id='fixture-state';document.body.append(metadata);
-  let frames=0;const removeMetadata=viewer.scene.postRender.addEventListener(()=>{if(++frames===10){metadata.textContent=JSON.stringify(state(),null,2);status.textContent=`READY · ${model} · ${quality} · ${view} · ${clouds.renderTargetMode} · ${JulianDate.toIso8601(viewer.clock.currentTime)} · seed 13`;removeMetadata();}});
+  let frames=0;const removeMetadata=viewer.scene.postRender.addEventListener(()=>{if(++frames>=10&&(!terrainFixture||viewer.scene.globe.tilesLoaded)){metadata.textContent=JSON.stringify(state(),null,2);status.textContent=`READY · ${model} · ${quality} · ${view} · ${clouds.renderTargetMode} · ${JulianDate.toIso8601(viewer.clock.currentTime)} · seed 13`;removeMetadata();}});
   status.textContent=renderFailure?`RENDER ERROR · ${renderFailure}`:'等待 10 个完整渲染帧…';
   if(query.has('validation')){
     const controls=document.createElement('div');controls.id='validation-controls';

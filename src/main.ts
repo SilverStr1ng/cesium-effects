@@ -77,7 +77,7 @@ async function boot() {
   const atmosphere=new AtmosphereEffect();
   atmosphere.mount({viewer,onStatus:notify});
   const clouds=new CloudComparison({sunDirection:()=>atmosphere.sunDirection,moonDirection:()=>atmosphere.moonDirection,
-    moonFraction:()=>atmosphere.moonFraction,transmittance:()=>atmosphere.transmissionTexture,atmosphereEnabled:()=>atmosphere.enabled,
+    moonFraction:()=>atmosphere.moonLightFraction,transmittance:()=>atmosphere.transmissionTexture,atmosphereEnabled:()=>atmosphere.enabled,
     multipleScattering:()=>atmosphere.multipleScatteringTexture,medium:()=>atmosphere.mediumParameters,exposure:()=>atmosphere.parameters.exposure,
     skyIrradiance:()=>atmosphere.skyIrradianceTexture,
     backgroundStage:atmosphere.radianceStageName,backgroundIsHdr:()=>atmosphere.renderTargetMode==='RGBA16F'});

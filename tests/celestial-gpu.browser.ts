@@ -19,7 +19,7 @@ try{
   const program=gl.createProgram()!;gl.attachShader(program,vertex);gl.attachShader(program,fragment);gl.linkProgram(program);
   if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(program)!);gl.useProgram(program);
   const textures:WebGLTexture[]=[];
-  for(const [unit,names,value] of [[0,['u_skyView','u_multiple','depthTexture'],0],[1,['u_transmittance'],255],[2,['colorTexture'],128]] as const){
+  for(const [unit,names,value] of [[0,['u_skyView','u_multiple','depthTexture'],0],[1,['u_transmittance'],255],[2,['colorTexture','u_moonAlbedo'],128]] as const){
     const texture=gl.createTexture()!;textures.push(texture);gl.activeTexture(gl.TEXTURE0+unit);gl.bindTexture(gl.TEXTURE_2D,texture);
     gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,1,1,0,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array([value,value,value,255]));
     gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
@@ -29,6 +29,8 @@ try{
   const scalar=(name:string,v:number)=>gl.uniform1f(gl.getUniformLocation(program,name),v);
   vector('u_camera',[0,0,8378.137]);vector('u_medium',[0,0,0]);vector('u_sun',[0,0,-1]);vector('u_sunDisc',[1,0,0]);vector('u_moonDisc',[0,0,1]);
   scalar('u_sunRadius',.12);scalar('u_moonRadius',.2);scalar('u_moonBrightness',2.4);scalar('u_exposure',8);
+  scalar('u_sunBrightness',1);scalar('u_sunHaloRadius',.12);scalar('u_sunHaloBrightness',1);scalar('u_moonAlbedoMean',128/255);
+  gl.uniformMatrix3fv(gl.getUniformLocation(program,'u_moonFixedFromEcef'),false,[1,0,0,0,1,0,0,0,1]);
   const run=()=>{gl.drawArrays(gl.TRIANGLES,0,3);const pixels=new Uint8Array(256*256*4);gl.readPixels(0,0,256,256,gl.RGBA,gl.UNSIGNED_BYTE,pixels);if(gl.getError()!==gl.NO_ERROR)throw new Error('WebGL draw error');return pixels;};
   const phases=[[0,0,-1],[1,0,0],[-1,0,0],[0,0,1]].map(sun=>{vector('u_moonSun',sun);return run();});
   const stats=phases.map(pixels=>{
@@ -59,12 +61,15 @@ try{
     bucket.count++;bucket.error+=solarPixels[(px+py*256)*4]-expected;
   }
   const haloBias=buckets.map(bucket=>bucket.error/bucket.count);
+  vector('u_camera',[0,6378.937,0]);
+  const horizon=run(),lower=(128+120*256)*4,upper=(128+136*256)*4;
   const checks=[
     {name:'full, opposite quarters and new Moon retain their geometric lit area',pass:stats[0].fraction>.98&&Math.abs(stats[1].fraction-.5)<.08&&Math.abs(stats[2].fraction-.5)<.08&&stats[3].fraction===0,stats},
     {name:'quarter terminator faces the active sun on either side',pass:stats[1].right>stats[1].left*5&&stats[2].left>stats[2].right*5},
     {name:'dark lunar hemisphere occults background stars',pass:darkOccults},
     {name:'RGBA8 sky output retains solar HDR for cloud transmission',pass:Math.abs(solarRadiance-8.0384)<.5,solarRadiance},
     {name:'solar halo preserves sub-byte gradients without coherent quantization rings',pass:buckets.every(bucket=>bucket.count>100)&&haloBias.every(bias=>Math.abs(bias)<.1),haloBias}
+    ,{name:'solar disc uses each pixel ray: lower half blocked while upper half remains visible',pass:horizon[lower]<2&&horizon[upper]>200,lower:horizon[lower],upper:horizon[upper]}
   ];
   for(const t of textures)gl.deleteTexture(t);gl.deleteProgram(program);gl.deleteShader(vertex);gl.deleteShader(fragment);
   output.textContent=JSON.stringify({passed:checks.every(c=>c.pass),checks},null,2);document.title=checks.every(c=>c.pass)?'PASS · Celestial GPU':'FAIL · Celestial GPU';

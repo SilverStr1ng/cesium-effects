@@ -33,6 +33,17 @@ export function createWeatherTexture(scene:Cesium.Scene,width:number,height:numb
     source:{width,height,arrayBufferView:bytes},sampler:new api.Sampler({wrapS:api.TextureWrap.REPEAT,wrapT:api.TextureWrap.CLAMP_TO_EDGE})});
 }
 
+/** Linear (already sRGB-decoded) albedo; mip generation must average linear
+ * reflectance. Longitude wraps, north/south rows clamp. Owned by the caller. */
+export function createMippedAlbedoTexture(scene:Cesium.Scene,width:number,height:number,bytes:Uint8Array):GpuTexture {
+  const api=Cesium as unknown as {Texture:new(options:object)=>GpuTexture&{generateMipmap():void};Sampler:new(options:object)=>unknown;
+    TextureWrap:{REPEAT:number;CLAMP_TO_EDGE:number};TextureMinificationFilter:{LINEAR_MIPMAP_LINEAR:number}};
+  const texture=new api.Texture({context:(scene as unknown as {context:unknown}).context,flipY:false,
+    source:{width,height,arrayBufferView:bytes},sampler:new api.Sampler({wrapS:api.TextureWrap.REPEAT,wrapT:api.TextureWrap.CLAMP_TO_EDGE,
+      minificationFilter:api.TextureMinificationFilter.LINEAR_MIPMAP_LINEAR})});
+  texture.generateMipmap();return texture;
+}
+
 /** Repeat-wrapped optical statistics, including a supplied linear mip chain. */
 export function createRepeatingTexture(scene:Cesium.Scene,size:number,bytes:Uint8Array,mipLevels:Uint8Array[]):GpuTexture {
   const api=Cesium as unknown as {Texture:new(options:object)=>GpuTexture;Sampler:new(options:object)=>unknown;TextureWrap:{REPEAT:number};TextureMinificationFilter:{LINEAR_MIPMAP_LINEAR:number}};

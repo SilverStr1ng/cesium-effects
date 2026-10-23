@@ -13,5 +13,5 @@ cpSync(resolve('public/cesium'),resolve('artifacts/cesium'),{recursive:true});
 await build({configFile:false,root:source,base:'./',publicDir:false,
   define:{CESIUM_BASE_URL:JSON.stringify('/cesium/')},
   build:{outDir,emptyOutDir:true,chunkSizeWarningLimit:6000,
-    rollupOptions:{input:Object.fromEntries(['cloud-scene','cloud-gpu','water-cloud-gpu','celestial-state','celestial-gpu','atmosphere-gpu','lighting-gpu','satellite-lod','cloud-pipeline','high-cloud-gpu']
+    rollupOptions:{input:Object.fromEntries(['cloud-scene','cloud-gpu','water-cloud-gpu','celestial-state','celestial-gpu','celestial-optics','celestial-scene','atmosphere-gpu','lighting-gpu','satellite-lod','cloud-pipeline','high-cloud-gpu']
       .filter(name=>existsSync(resolve(source,`tests/${name}.html`))).map(name=>[name,resolve(source,`tests/${name}.html`)]))}}});

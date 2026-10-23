@@ -107,11 +107,13 @@
 
 ## 使用
 
+日月改进轮次起，云绑定 `atmosphere.moonLightFraction`（地心近似），UI 绑定 `atmosphere.moonFraction`（相机几何）。二者共用 `CelestialState` 的星历/艺术模式；移动相机不会改变固定云点的月光方向与相位增益。日月显示倍率和盘面/光晕亮度不会改变云光照。参见 [日月验证报告](celestial-validation.md)。
+
 ```ts
 const clouds = new GlobalCloudEffect({
   sunDirection: () => atmosphere.sunDirection,
   moonDirection: () => atmosphere.moonDirection,
-  moonFraction: () => atmosphere.moonFraction,
+  moonFraction: () => atmosphere.moonLightFraction,
   transmittance: () => atmosphere.transmissionTexture,
   atmosphereEnabled: () => atmosphere.enabled,
   multipleScattering: () => atmosphere.multipleScatteringTexture,

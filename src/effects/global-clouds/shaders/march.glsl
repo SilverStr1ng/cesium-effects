@@ -1,7 +1,9 @@
 in vec2 v_textureCoordinates;
 uniform float u_debugView;
+uniform bool u_emptySceneDepth;
 float debugFootprint=0.,debugPathLength=0.,debugWeather=0.,debugWeatherLength=0.;
 float sceneDepth(vec2 uv){
+    if(u_emptySceneDepth)return 1.;
     // A reduced-resolution ray rarely hits the exact centre of a full-resolution
     // depth texel. Nearest depth at a different ray cuts holes in orbital clouds.
     vec2 size=vec2(textureSize(depthTexture,0)),pixel=uv*size-.5,base=floor(pixel),f=fract(pixel);

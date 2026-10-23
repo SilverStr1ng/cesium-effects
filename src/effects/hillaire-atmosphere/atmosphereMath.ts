@@ -2,7 +2,9 @@
 export const PLANET_RADIUS = 6378.137;
 export const ATMOSPHERE_HEIGHT = 100;
 export const POLAR_SCALE = 6378137 / 6356752.314245;
-export const atmosphereDefaults = { elevation: 28, azimuth: 245, rayleigh: 1, mie: 1, ozone: 1, exposure: 8, sunScale:2.8, moonScale:2.2, moonBrightness:2.4 };
+export const atmosphereDefaults = { elevation: 28, azimuth: 245, rayleigh: 1, mie: 1, ozone: 1, exposure: 8,
+  sunScale:3.2, moonScale:3, sunBrightness:1, moonBrightness:2.4,
+  sunHaloScale:2.8, sunHaloBrightness:1, moonHaloScale:3, moonHaloBrightness:0 };
 export type AtmosphereParameters = typeof atmosphereDefaults;
 
 export function sphereInterval(origin: readonly number[], direction: readonly number[], radius: number): [number,number] | null {
