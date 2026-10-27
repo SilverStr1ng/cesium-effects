@@ -52,4 +52,3 @@ try{
   gpu.destroy();output.textContent=JSON.stringify({passed:checks.every(c=>c.pass),checks},null,2);
   document.title=checks.every(c=>c.pass)?'PASS · Grazing clouds':'FAIL · Grazing clouds';
 }catch(error){output.textContent=String(error);document.title='ERROR · Grazing clouds';}
-
