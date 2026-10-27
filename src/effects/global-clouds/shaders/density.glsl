@@ -7,8 +7,8 @@ uniform sampler3D u_cirrus;
 uniform sampler2D u_iceRibbon;
 uniform sampler3D u_iceAnisotropic;
 uniform bool u_opticsReady;
-// Runtime bound avoids ANGLE unrolling 144 texture-heavy subcolumns into each
-// density/light call. Production fixes this to 12 at every quality.
+// Runtime bound avoids ANGLE expanding texture-heavy column loops. This fixes
+// the radial maximum at 12 and the anisotropic maximum at 36 x 12, all qualities.
 uniform float u_columnGrid;
 uniform bool u_voxelReady,u_skipVoxels;
 vec4 voxelShape(vec3 p,float footprint);
@@ -77,9 +77,31 @@ vec4 materialOptics(float cut,float type,float scale){
 vec4 farMoments=vec4(0);
 vec3 farAnchor=vec3(1e8);
 float farTop=1.,farFootprint=-1.,farSlant=-1.,farShape=64.;
-// 144 world-local subcolumns filter the nonlinear cluster and final T. The
-// conditional material table filters unresolved voxels, NOT their mean noise.
-// Cached along a ray, at half-footprint spacing; no extra GPU texture.
+// Midpoint rules 4, 12, 36 are nested. Weights blend completed optical moments,
+// not the noise or extinction before their nonlinear transfer functions.
+float columnRuleWeight(int index,int grid,float medium,float fine){
+    float w=fine/float(grid);
+    if(grid<=12||(index%3)==1)w+=medium*(1.-fine)/12.;
+    if(grid==4||(grid==12&&(index%3)==1)||(grid==36&&(index%9)==4))w+=(1.-medium)/4.;
+    return w;
+}
+// Inverse CDF of the minor-axis projection of a uniform square. The projected
+// footprint is a parallelogram, not its bounding rectangle. Area-uniform strips
+// preserve E[T] and holes at every screen rotation without wasting taps outside.
+float columnStrip(float u,vec2 minor){
+    float a=.5*min(abs(minor.x),abs(minor.y)),b=.5*max(abs(minor.x),abs(minor.y));
+    float q=min(u,1.-u);
+    float y=a>1e-6&&q<a/(2.*b)?-a-b+sqrt(8.*a*b*q):2.*b*q-b;
+    return u<.5?y:-y;
+}
+void columnStripBounds(float y,vec2 row,inout vec2 bounds){
+    if(abs(row.x)<1e-6)return;
+    vec2 hit=(vec2(-.5,.5)-row.y*y)/row.x;
+    bounds=vec2(max(bounds.x,min(hit.x,hit.y)),min(bounds.y,max(hit.x,hit.y)));
+}
+// The radial rule is retained; only projected anisotropic supports use the
+// principal-axis rule. At most 432 taps (576 within the narrow 1.05-1.25
+// anisotropy blend), cached along a ray. There is no extra GPU texture.
 void prepareFarColumns(vec3 p,float footprint){
     vec3 column=normalize(p)*(Rg+u_base);
     if(distance(column,farAnchor)<max(.25,footprint*.5)&&abs(footprint-farFootprint)<max(.01,footprint*.05)&&abs(cloudSlant-farSlant)<cloudSlant*.05)return;
@@ -97,15 +119,43 @@ void prepareFarColumns(vec3 p,float footprint){
     vec3 tangent=cloudRay-n*dot(n,cloudRay);
     float stretch=(cloudSlant-1.)/max(1e-6,dot(tangent,tangent));
     east+=tangent*dot(east,tangent)*stretch;north+=tangent*dot(north,tangent)*stretch;
-    // A 4x4 rule is a subset of the 12x12 rule (indices 1,4,7,10).
-    // Blend their final moments continuously over 4-12 km. At low orbit this
-    // needs only 16 subcolumns; quality never selects another weather field.
-    float detailed=smoothstep(4.,12.,footprint);
-    int grid=detailed<=0.?4:int(u_columnGrid);float count=float(grid*grid);
-    for(int y=0;y<grid;y++)for(int x=0;x<grid;x++){
-        float weight=detailed/count+(1.-detailed)*(grid==4||((x%3)==1&&(y%3)==1)?1./16.:0.);
-        vec2 offset=(vec2(x,y)+.5)/float(grid)-.5;
-        vec3 samplePoint=normalize(column+footprint*(east*offset.x+north*offset.y))*(Rg+u_base);
+    // Singular axes of the COMPLETE screen-to-tangent map, including off-axis
+    // rays and the WGS84 metric. Slant alone is not a sampling-grid budget.
+    vec3 axis=normalize(east),perpendicular=normalize(cross(n,axis));
+    vec2 a=vec2(dot(east,axis),dot(east,perpendicular));
+    vec2 b=vec2(dot(north,axis),dot(north,perpendicular));
+    float xx=a.x*a.x+b.x*b.x,yy=a.y*a.y+b.y*b.y,xy=a.x*a.y+b.x*b.y;
+    float delta=length(vec2(xx-yy,2.*xy));
+    float anisotropy=sqrt((xx+yy+delta)/max(1e-6,xx+yy-delta));
+    float anisotropic=smoothstep(1.05,1.25,anisotropy);
+    float angle=delta>1e-6?.5*atan(2.*xy,xx-yy):0.;
+    vec3 major=axis*cos(angle)+perpendicular*sin(angle),minor=cross(n,major);
+    a=vec2(dot(east,major),dot(east,minor));b=vec2(dot(north,major),dot(north,minor));
+    float determinant=a.x*b.y-a.y*b.x;
+    vec2 rowA=vec2(b.y,-b.x)/determinant,rowB=vec2(-a.y,a.x)/determinant;
+    vec2 support=footprint*(abs(a)+abs(b));
+    float radial=smoothstep(4.,12.,footprint);
+    // Bound the major axis independently: 4 -> 12 -> 36; minor 4 -> 12.
+    // No global increase to the near/radial grid or to height march steps.
+    vec2 medium=smoothstep(vec2(4.),vec2(12.),support);
+    float fine=smoothstep(12.,36.,support.x);
+    for(int rule=anisotropic>=1.?1:0;rule<2;rule++){
+      bool principal=rule==1;
+      int nx=principal?(fine>0.?int(3.*u_columnGrid):medium.x>0.?int(u_columnGrid):4):(radial>0.?int(u_columnGrid):4);
+      int ny=principal?(medium.y>0.?int(u_columnGrid):4):nx;
+      for(int y=0;y<ny;y++)for(int x=0;x<nx;x++){
+        float weight;vec3 offset;
+        if(principal){
+            float across=columnStrip((float(y)+.5)/float(ny),vec2(a.y,b.y));
+            vec2 bounds=vec2(-1e6,1e6);columnStripBounds(across,rowA,bounds);columnStripBounds(across,rowB,bounds);
+            float along=mix(bounds.x,bounds.y,(float(x)+.5)/float(nx));
+            offset=major*along+minor*across;
+            weight=anisotropic*columnRuleWeight(x,nx,medium.x,fine)*columnRuleWeight(y,ny,medium.y,0.);
+        }else{
+            vec2 uv=(vec2(x,y)+.5)/float(nx)-.5;offset=east*uv.x+north*uv.y;
+            weight=(1.-anisotropic)*(radial/float(nx*ny)+(1.-radial)*(nx==4||((x%3)==1&&(y%3)==1)?1./16.:0.));
+        }
+        vec3 samplePoint=normalize(column+footprint*offset)*(Rg+u_base);
         vec2 weather=cloudWeather(samplePoint,footprint);
         float top=cloudTypeTop(weather.y);farTop+=top*weight;
         if(weather.x<=0.)continue;
@@ -115,6 +165,8 @@ void prepareFarColumns(vec3 p,float footprint){
         float scale=u_density*u_thickness/3.8*cloudSlant*cluster*smoothstep(0.,.2,weather.x);
         vec4 m=materialOptics((1.-weather.x)*.22+(1.-cluster)*.3,weather.y,scale);
         farMoments+=vec4(m.r,m.g,m.b*m.r,m.a)*weight;
+      }
+      if(anisotropic<=0.)break;
     }
     farMoments.b/=max(.0001,farMoments.r);
     // Fit a positive conditional optical-depth distribution to BOTH E[tau]
