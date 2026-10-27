@@ -1,4 +1,7 @@
 in vec2 v_textureCoordinates;
+#ifndef CLOUD_INTERVAL_COUNT
+#define CLOUD_INTERVAL_COUNT 4
+#endif
 uniform float u_debugView;
 uniform bool u_emptySceneDepth;
 float debugFootprint=0.,debugPathLength=0.,debugWeather=0.,debugWeatherLength=0.;
@@ -127,7 +130,12 @@ CloudSegment integrateCloud(vec3 d,vec2 segment){
         CloudSegment nearCloud=emptyCloudSegment(),farCloud=emptyCloudSegment();
         // One call site also keeps the large march body from being duplicated
         // by ANGLE. The uniform-driven start keeps this tiny loop dynamic.
-        for(int mode=blend>=1.?2:1;mode<=2;mode++){
+        // Keep the default beside its use: standalone shader probes import
+        // the integration functions without the full-screen entry declarations.
+        #ifndef CLOUD_REPRESENTATION_COUNT
+        #define CLOUD_REPRESENTATION_COUNT 2
+        #endif
+        for(int mode=blend>=1.?2:1;mode<=CLOUD_REPRESENTATION_COUNT;mode++){
             cloudRepresentation=mode;farAnchor=vec3(1e8);
             CloudSegment part=integrateCloudMedium(d,segment);
             if(mode==1)nearCloud=part;else farCloud=part;
@@ -165,7 +173,7 @@ void main(){
     #ifdef LAYERED_CLOUDS
     vec2 intervals[4];int layers[4];
     cloudIntervals(u_camera,d,maximum,intervals,layers);
-    for(int i=0;i<4;i++){
+    for(int i=0;i<CLOUD_INTERVAL_COUNT;i++){
         cloudLayer=layers[i];integrateCloudInterval(d,intervals[i],acc,airL,airT,cursor);
         if(acc.a>.995&&u_debugView==0.)break;
     }
