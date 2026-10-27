@@ -1,5 +1,7 @@
 // Dual-lobe droplet scattering, integrated for both directional light sources.
-float waterPhase(float c,float g){return (1.-g*g)/(4.*PI*pow(max(.015,1.+g*g-2.*g*c),1.5));}
+// |g| <= .9 in the public parameters. Its smallest legal denominator is .01;
+// .015 clipped the forward lobe and lost energy. Clamp only cosine roundoff.
+float waterPhase(float c,float g){return (1.-g*g)/(4.*PI*pow(1.+g*g-2.*g*clamp(c,-1.,1.),1.5));}
 vec3 waterPhases(float c){
     vec3 result;float eccentricity=1.;
     for(int j=0;j<3;j++){
