@@ -10,27 +10,45 @@ for(const patch of [0,3,5,7])for(const footprint of [4,12,28])for(const mu of [.
   rows.push({patch,footprint,mu,rotation,reference,actual:actual.moments,taps:actual.taps,support:actual.support,
     opacityError:actual.moments[0]-reference[0],coverageError:actual.moments[3]-reference[3]});
 }
-// Convergence is checked for every failing case as well as the four regression
-// cases. These are two distinct gates: agreement cannot excuse a bad reference.
+// Check convergence at every point, including apparently passing candidates.
+// Agreement cannot excuse an under-resolved reference.
 const unconverged=[];
-for(const row of rows)if(Math.abs(row.opacityError)>.02||row.rotation===0&&[[5,28,.25],[3,4,.1],[5,4,.04],[0,4,.1]].some(c=>c[0]===row.patch&&c[1]===row.footprint&&c[2]===row.mu)){
+for(const row of rows){
   const doubled=spatialMean(row.patch,row.footprint,row.mu,384,384,row.rotation);
   unconverged.push({...row,reference384:doubled,convergence:doubled[0]-row.reference[0]});
+}
+const refinements=[];
+for(const row of unconverged)if(Math.abs(row.convergence)>.002){
+  const fine=spatialMean(row.patch,row.footprint,row.mu,768,768,row.rotation);
+  refinements.push({...row,reference768:fine,convergence384to768:fine[0]-row.reference384[0],opacityError768:row.actual[0]-fine[0]});
 }
 const parameterChecks=[];
 for(const [density,thickness] of [[.5,3.8],[2,3.8],[1.1,1],[1.1,8]])for(const [patch,mu] of [[3,.1],[5,.04]]){
   const reference=spatialMean(patch,4,mu,192,192,0,density,thickness),actual=filteredMean(patch,4,mu,0,density,thickness);
   parameterChecks.push({patch,mu,density,thickness,reference,actual:actual.moments,opacityError:actual.moments[0]-reference[0]});
 }
-const failures=rows.filter(row=>Math.abs(row.opacityError)>.02);
+// Judge accuracy against the finest checked reference, not the initial 192²
+// estimate. Preserve both in the evidence so refinement cannot hide a failure.
+const accuracy=unconverged.map(row=>{
+  const fine=refinements.find(r=>r.patch===row.patch&&r.footprint===row.footprint&&r.mu===row.mu&&r.rotation===row.rotation);
+  const reference=fine?.reference768??row.reference384;
+  return {patch:row.patch,footprint:row.footprint,mu:row.mu,rotation:row.rotation,
+    referenceGrid:fine?768:384,reference,actual:row.actual,
+    referenceConvergence:fine?.convergence384to768??row.convergence,
+    opacityError:row.actual[0]-reference[0],coverageError:row.actual[3]-reference[3]};
+});
+const failures=accuracy.filter(row=>Math.abs(row.opacityError)>.02);
+const referenceFailures=accuracy.filter(row=>Math.abs(row.referenceConvergence)>.002);
 const report={kind:'CPU same-far-model local spatial average; NOT final GPU L/T',
   conditions:{seed:13,coverage:.62,density:1.1,baseKm:1.5,thicknessKm:3.8,detail:.55,type:0,windAngle:0,evolution:0},
-  targets:{opacityAbsolute:.02,referenceConvergence:.002},rows,failures,convergence:unconverged,parameterChecks,
+  targets:{opacityAbsolute:.02,referenceConvergence:.002},rows,accuracy,failures,referenceFailures,convergence:unconverged,referenceRefinements:refinements,parameterChecks,
   limits:['Parameter checks isolate quadrature of the existing table. They do not validate the table against changed near voxels.',
     'The material table is baked for detail=.55; far-model detail sensitivity and partial-column correlation remain unvalidated.',
     'No GPU times, screenshots or temporal conclusions are produced by this CPU command.']};
 mkdirSync('artifacts/stage5',{recursive:true});writeFileSync('artifacts/stage5/grazing-matrix.json',JSON.stringify(report,null,2));
 console.log(JSON.stringify({cases:rows.length,failures:failures.map(r=>({patch:r.patch,footprint:r.footprint,mu:r.mu,rotation:r.rotation,error:r.opacityError})),
-  maxOpacityError:Math.max(...rows.map(r=>Math.abs(r.opacityError))),maxReferenceDelta:Math.max(...unconverged.map(r=>Math.abs(r.convergence))),
+  maxOpacityError:Math.max(...accuracy.map(r=>Math.abs(r.opacityError))),maxInitialReferenceDelta:Math.max(...unconverged.map(r=>Math.abs(r.convergence))),
+  maxFinalReferenceDelta:Math.max(...accuracy.map(r=>Math.abs(r.referenceConvergence))),
+  referenceRefinements:refinements.map(r=>({patch:r.patch,footprint:r.footprint,mu:r.mu,rotation:r.rotation,convergence384to768:r.convergence384to768,opacityError768:r.opacityError768})),
   parameterMaxError:Math.max(...parameterChecks.map(r=>Math.abs(r.opacityError)))},null,2));
-if(failures.length||unconverged.some(r=>Math.abs(r.convergence)>.002)||parameterChecks.some(r=>Math.abs(r.opacityError)>.02))process.exitCode=1;
+if(failures.length||referenceFailures.length||parameterChecks.some(r=>Math.abs(r.opacityError)>.02))process.exitCode=1;

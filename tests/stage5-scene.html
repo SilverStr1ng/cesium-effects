@@ -1,0 +1,8 @@
+<!doctype html><html lang="zh-CN"><meta charset="UTF-8"><title>Stage 5 Cesium acceptance</title>
+<style>body{margin:16px;background:#101c24;color:#eee;font:14px system-ui}#viewport{width:984px;height:554px;overflow:hidden}#scene{width:1920px;height:1080px;transform:scale(.5125);transform-origin:top left}button{padding:8px;margin:6px}pre{white-space:pre-wrap;font:11px monospace}#evidence img{width:480px}#status{padding:8px}</style>
+<h1>第五阶段 · 固定 1920×1080 / fovy 60° / medium / exposure 8</h1>
+<p>保持此 Chrome 标签页在前台；整帧与分 pass 分轮查询，每组目标 200 个有效 GPU 样本。</p>
+<div id="status">启动中…</div><div id="viewport"><div id="scene"></div></div>
+<button id="run-matrix" disabled>运行七场景 GPU 矩阵</button><button id="run-switches" disabled>验证首次 quality / HDR 切换</button><button id="run-tour" disabled>记录全球→地面连续镜头</button><button id="run-captures" disabled>保存七场景截图</button>
+<pre id="startup-result"></pre><pre id="benchmark-result"></pre><pre id="switch-result"></pre><pre id="tour-result"></pre><pre id="capture-result"></pre><div id="evidence"></div>
+<script type="module" src="./stage5-scene.browser.ts"></script></html>

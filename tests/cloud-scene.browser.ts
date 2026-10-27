@@ -94,13 +94,16 @@ try{
   const terrainFixture=view==='moon-horizon'||view==='sun-horizon'?horizonView(viewer,celestialPositions(viewer.clock.currentTime)[view==='sun-horizon'?'sun':'moon'],query.get('terrain')==='ridge'):undefined;
   const gl=(viewer.scene as unknown as {context:{_gl:WebGL2RenderingContext}}).context._gl;
   const debug=gl.getExtension('WEBGL_debug_renderer_info');
-  const state=()=>({initialization:{mountMs,assetsReadyMs},terrainFixture,utc:JulianDate.toIso8601(viewer.clock.currentTime),atmosphere:{...atmosphere.parameters,storage:atmosphere.renderTargetMode??'RGBA8',clockLinked:atmosphere.clockLinked,moonFraction:atmosphere.moonFraction,moonLightFraction:atmosphere.moonLightFraction,lunarTexture:atmosphere.lunarTextureInfo,discGeometry:atmosphere.celestialState?.observer},
-    clouds:{model,voxels:clouds.voxelReady&&query.get('voxels')!=='off',storage:clouds.renderTargetMode,moonLight:clouds.moonLight,quality:clouds.quality,parameters:{...clouds.parameters},motion:clouds.motion},
+  const state=()=>({initialization:{mountMs,assetsReadyMs},terrainFixture,utc:JulianDate.toIso8601(viewer.clock.currentTime),atmosphere:{...atmosphere.parameters,enabled:atmosphere.enabled,storage:atmosphere.renderTargetMode??'RGBA8',clockLinked:atmosphere.clockLinked,moonFraction:atmosphere.moonFraction,moonLightFraction:atmosphere.moonLightFraction,lunarTexture:atmosphere.lunarTextureInfo,discGeometry:atmosphere.celestialState?.observer},
+    clouds:{model,enabled:clouds.enabled,voxels:clouds.voxelReady&&query.get('voxels')!=='off',storage:clouds.renderTargetMode,moonLight:clouds.moonLight,quality:clouds.quality,parameters:{...clouds.parameters},motion:clouds.motion},
     camera:{position:Cartesian3.pack(viewer.camera.positionWC,[]),direction:Cartesian3.pack(viewer.camera.directionWC,[]),up:Cartesian3.pack(viewer.camera.upWC,[]),fovy:frustum.fovy},
     drawingBuffer:[gl.drawingBufferWidth,gl.drawingBufferHeight],renderer:debug?gl.getParameter(debug.UNMASKED_RENDERER_WEBGL):gl.getParameter(gl.RENDERER)});
   removeProfiler=attachFrameProfiler(viewer,state);
   const metadata=document.createElement('pre');metadata.id='fixture-state';document.body.append(metadata);
-  let frames=0;const removeMetadata=viewer.scene.postRender.addEventListener(()=>{if(++frames>=10&&(!terrainFixture||viewer.scene.globe.tilesLoaded)){metadata.textContent=JSON.stringify(state(),null,2);status.textContent=`READY · ${model} · ${quality} · ${view} · ${clouds.renderTargetMode} · ${JulianDate.toIso8601(viewer.clock.currentTime)} · seed 13`;removeMetadata();}});
+  let frames=0;const removeMetadata=viewer.scene.postRender.addEventListener(()=>{if(++frames>=10&&(!terrainFixture||viewer.scene.globe.tilesLoaded)){
+    metadata.textContent=JSON.stringify(state(),null,2);status.textContent=`READY · ${model} · ${quality} · ${view} · ${clouds.renderTargetMode} · ${JulianDate.toIso8601(viewer.clock.currentTime)} · seed 13`;
+    if(query.has('capture')){const evidence=document.createElement('div');evidence.id='evidence';const img=new Image();img.dataset.name='cloud-scene';img.alt='Fixed scene';img.width=480;img.src=viewer.canvas.toDataURL('image/png');evidence.append(img);document.body.append(evidence);}
+    removeMetadata();}});
   status.textContent=renderFailure?`RENDER ERROR · ${renderFailure}`:'等待 10 个完整渲染帧…';
   if(query.has('validation')){
     const controls=document.createElement('div');controls.id='validation-controls';

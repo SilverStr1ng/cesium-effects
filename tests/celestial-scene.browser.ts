@@ -18,7 +18,7 @@ const frusta=()=> (viewer.scene as unknown as {_view:{frustumCommandsList:unknow
 const pixel=()=>new Promise<number[]>(resolve=>{
   const remove=viewer.scene.postRender.addEventListener(()=>{const p=new Uint8Array(4);gl.readPixels(256,256,1,1,gl.RGBA,gl.UNSIGNED_BYTE,p);remove();resolve(Array.from(p));});
 });
-const checks:{name:string;pass:boolean;pixels?:number[];frusta?:number}[]=[];
+const checks:{name:string;pass:boolean;pixels?:number[];frusta?:number;waitFrames?:number}[]=[];
 let sky:AtmosphereEffect|undefined;
 try{
   await prepareCelestialFrame(viewer.clock.currentTime);
@@ -42,8 +42,13 @@ try{
     checks.push({name:`${hdr?'RGBA16F':'RGBA8'}: ground -> empty sky disc survives stale ground depth`,pass:groundFrusta>0&&emptyFrusta===0&&moon[0]>100,pixels:moon,frusta:emptyFrusta});
     const foreground=viewer.entities.add({position:Cartesian3.add(position,Cartesian3.multiplyByScalar(direction,1000,new Cartesian3()),new Cartesian3()),
       box:{dimensions:new Cartesian3(200,200,200),material:Color.fromBytes(10,10,10)}});
-    for(let i=0;i<5;i++)await frame();const occluded=await pixel();
-    checks.push({name:`${hdr?'RGBA16F':'RGBA8'}: real foreground depth still occludes the Moon`,pass:frusta()>0&&occluded[0]<moon[0]*.5,pixels:occluded,frusta:frusta()});
+    // Entity geometry is prepared asynchronously. Five frames can elapse
+    // before the box exists, especially after a cold worker start. Require
+    // a real foreground command before testing its depth; retain the timeout
+    // and the original pixel/visibility gates.
+    let waitFrames=0;for(;waitFrames<120;waitFrames++){await frame();if(frusta()>0)break;}
+    const occluded=await pixel();
+    checks.push({name:`${hdr?'RGBA16F':'RGBA8'}: real foreground depth still occludes the Moon`,pass:frusta()>0&&occluded[0]<moon[0]*.5,pixels:occluded,frusta:frusta(),waitFrames});
     viewer.entities.remove(foreground);for(let i=0;i<3;i++)await frame();const restored=await pixel();
     checks.push({name:`${hdr?'RGBA16F':'RGBA8'}: removal of last opaque object restores sky visibility`,pass:frusta()===0&&Math.abs(restored[0]-moon[0])<3,pixels:restored});
     sky.destroy();sky=undefined;
