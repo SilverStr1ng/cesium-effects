@@ -57,6 +57,9 @@ export class GlobalCloudEffect implements SceneEffect {
   enabled=true;paused=false;quality:CloudQuality='medium';
   private context?:EffectContext;
   private weather?:GpuTexture;
+  // Keep the displayed seed paired with the adopted weather while a worker
+  // prepares a newer request. The UI parameter may already name the next seed.
+  private weatherSeed=cloudDefaults.seed;
   private noise?:GpuTexture;
   private voxels?:GpuTexture;
   private optics?:GpuTexture;
@@ -95,7 +98,7 @@ export class GlobalCloudEffect implements SceneEffect {
   private uniforms(){
     return {u_weather:()=>this.weather!,u_noise:()=>this.noise!,u_base:()=>this.parameters.base,
       u_thickness:()=>this.parameters.thickness,u_coverage:()=>this.parameters.coverage,u_density:()=>this.parameters.density,
-      u_detail:()=>this.parameters.detail,u_seed:()=>this.parameters.seed,u_windAngle:()=>this.windAngle,
+      u_detail:()=>this.parameters.detail,u_seed:()=>this.weatherSeed,u_windAngle:()=>this.windAngle,
       u_evolution:()=>this.evolution,u_windSpeed:()=>this.parameters.wind,u_sun:()=>this.sun,
       u_emptySceneDepth:()=>this.context?emptySceneDepth(this.context.viewer.scene):false,
       u_cloudType:()=>this.parameters.type,u_highCoverage:()=>this.parameters.highCoverage,
@@ -114,6 +117,7 @@ export class GlobalCloudEffect implements SceneEffect {
     }else{
       const weather=generate('weather',()=>createWeather(this.parameters.seed));
       this.weather=upload('weather',()=>createWeatherTexture(scene,WEATHER_WIDTH,WEATHER_HEIGHT,weather));
+      this.weatherSeed=this.parameters.seed;
       const noise=generate('noise',createCumulusNoise);
       this.noise=upload('noise',()=>createRepeatingVolume(scene,CUMULUS_NOISE_SIZE,noise.bytes,noise.mips));
       this.initialization.status='ready';this.initialization.readyWallMs=performance.now()-this.initialization.startedAt;
@@ -141,7 +145,7 @@ export class GlobalCloudEffect implements SceneEffect {
     if(!this.context)return;const replacing=Boolean(this.assetLoad);
     if(replacing)this.initialization.status='cancelled';this.assetLoad?.cancel();const epoch=++this.assetEpoch,context=this.context;
     if(weatherOnly||replacing)this.initialization={startedAt:performance.now(),generation:[],uploads:[],status:'loading'};
-    const metrics=this.initialization,request=loadCloudAssets(context.viewer.scene,this.parameters.seed,{weatherOnly,cache:this.assetCacheEnabled,metrics});
+    const metrics=this.initialization,seed=this.parameters.seed,request=loadCloudAssets(context.viewer.scene,seed,{weatherOnly,cache:this.assetCacheEnabled,metrics});
     this.assetLoad=request;
     this.ready=request.promise.then(({textures,fellBack})=>{
       if(epoch!==this.assetEpoch||!this.context){destroyCloudTextures(textures);return;}
@@ -149,6 +153,7 @@ export class GlobalCloudEffect implements SceneEffect {
         const name=key as 'weather'|'noise'|'cirrus'|'iceRibbon'|'iceAnisotropic'|'voxels'|'optics';
         const old=this[name];this[name]=value;if(old&&!old.isDestroyed())old.destroy();
       }
+      this.weatherSeed=seed;
       metrics.status=fellBack?'fallback':'ready';if(!this.stage)this.buildStage();
       context.onStatus(fellBack?'Worker 不可用，使用程序化云':'云资源已就绪');
     }).catch(error=>{if(epoch===this.assetEpoch&&this.context){metrics.status='failed';context.onStatus(`云资源上传失败：${String(error)}`);}})
@@ -211,7 +216,7 @@ export class GlobalCloudEffect implements SceneEffect {
     v.highAnisotropy=Math.max(0,Math.min(.9,v.highAnisotropy));v.highAlbedo=Math.max(0,Math.min(1,v.highAlbedo));v.highMultiple=Math.max(0,Math.min(.3,v.highMultiple));
     if(v.seed!==seed&&this.context){
       if(this.id==='global-clouds')this.loadAssets(Boolean(this.noise));
-      else this.weather?.copyFrom({source:{width:WEATHER_WIDTH,height:WEATHER_HEIGHT,arrayBufferView:createWeather(v.seed)}});
+      else{this.weather?.copyFrom({source:{width:WEATHER_WIDTH,height:WEATHER_HEIGHT,arrayBufferView:createWeather(v.seed)}});this.weatherSeed=v.seed;}
     }
   }
   setQuality(value:CloudQuality){if(this.quality===value)return;this.quality=value;this.buildStage();}

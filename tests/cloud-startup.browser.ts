@@ -19,6 +19,10 @@ try{
   const stable=assets(warm).slice(1),oldWeather=assets(warm)[0];
   warm.updateParameters({seed:14});const first=warm.ready;warm.updateParameters({seed:15});const second=warm.ready;warm.updateParameters({seed:13});await Promise.all([first,second,warm.ready]);
   checks.push({name:'superseded seed requests settle, final weather wins, material is not uploaded again',pass:warm.parameters.seed===13&&warm.initialization.status==='ready'&&warm.initialization.uploads.length===1&&oldWeather.isDestroyed()&&assets(warm).slice(1).every((t,i)=>t===stable[i])});
+  const displayedSeed=()=> (warm as unknown as {uniforms():{u_seed():number}}).uniforms().u_seed();
+  warm.updateParameters({seed:14});const seedBeforeReady=displayedSeed();await warm.ready;
+  checks.push({name:'pending seed remains paired with old weather, then adopts atomically',pass:seedBeforeReady===13&&displayedSeed()===14&&assets(warm).slice(1).every((t,i)=>t===stable[i])});
+  warm.updateParameters({seed:13});await warm.ready;
   warm.destroy();
   const NativeWorker=window.Worker;
   try{
