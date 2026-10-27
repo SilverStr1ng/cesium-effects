@@ -5,9 +5,10 @@ import {createHash} from 'node:crypto';
 import assert from 'node:assert/strict';
 
 const root=resolve('artifacts/stage5'),head=execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim();
+const verifyOnly=process.argv.includes('--verify');
 // The source archive must contain the tests and report being delivered. Never
 // label an uncommitted working tree as an immutable HEAD snapshot.
-assert.equal(execFileSync('git',['status','--porcelain'],{encoding:'utf8'}).trim(),'','Commit the reviewed changes before packaging evidence.');
+if(!verifyOnly)assert.equal(execFileSync('git',['status','--porcelain'],{encoding:'utf8'}).trim(),'','Commit the reviewed changes before packaging evidence.');
 const destination=resolve('artifacts',`stage5-evidence-${head.slice(0,8)}`);mkdirSync(destination,{recursive:true});
 const read=name=>JSON.parse(readFileSync(join(root,name),'utf8'));
 const gpu=read('gpu-summary.json'),tour=read('current-tour.json');
@@ -16,7 +17,18 @@ const probes=probeNames.map(name=>({name,...read(name+'.json')}));
 for(const p of probes)assert.ok(p.passed&&p.checks.every(c=>c.pass),`${p.name}: functional regression failed`);
 assert.ok(tour.complete&&tour.samples.length===25,'Continuous-camera evidence is incomplete');
 const measured={baseline:read('baseline-gpu.json'),current:read('current-gpu.json')};
-const fixed=({visible,focused,...conditions})=>conditions;
+const fixed=({visible,focused,camera:{up,...camera},...conditions})=>({...conditions,camera});
+let maxUpComponentDelta=0;
+function matchConditions(a,b,message){
+  assert.deepEqual(fixed(a),fixed(b),message);
+  // Cesium re-orthonormalizes camera.up, leaving double-precision roundoff
+  // even at a frozen pose. Every other condition must be exactly equal.
+  assert.equal(a.camera.up.length,3);assert.equal(b.camera.up.length,3);
+  for(let i=0;i<3;i++){
+    const delta=Math.abs(a.camera.up[i]-b.camera.up[i]);maxUpComponentDelta=Math.max(maxUpComponentDelta,delta);
+    assert.ok(delta<=128*Number.EPSILON,`${message}: up[${i}] delta ${delta}`);
+  }
+}
 const conditionChecks=[];
 for(const version of ['baseline','current']){
   assert.ok(measured[version].complete,`${version}: incomplete GPU matrix`);
@@ -24,7 +36,7 @@ for(const version of ['baseline','current']){
   const keys=new Set();
   for(const r of measured[version].results){
     const key=`${r.name}/${r.mode}/${r.round}`;assert.ok(!keys.has(key),`${version}: duplicate ${key}`);keys.add(key);
-    assert.deepEqual(fixed(r.initial),fixed(r.final),`${version}/${key}: state changed during timing`);
+    matchConditions(r.initial,r.final,`${version}/${key}: state changed during timing`);
     assert.deepEqual(r.initial.buffer,[1920,1080],`${version}/${key}: buffer`);
     assert.ok(Math.abs(r.initial.camera.fovy-Math.PI/3)<1e-12,`${version}/${key}: vertical FOV`);
     assert.equal(r.initial.clouds.parameters.seed,13);assert.equal(r.initial.clouds.quality,'medium');
@@ -35,12 +47,13 @@ for(const version of ['baseline','current']){
     }
     if(version==='current'){
       const before=measured.baseline.results.find(b=>b.name===r.name&&b.mode===r.mode&&b.round===r.round);
-      assert.ok(before,`Missing baseline ${key}`);assert.deepEqual(fixed(before.initial),fixed(r.initial),`${key}: mismatched before/after conditions`);
+      assert.ok(before,`Missing baseline ${key}`);matchConditions(before.initial,r.initial,`${key}: mismatched before/after conditions`);
       conditionChecks.push({key,matched:true});
     }
   }
 }
-writeFileSync(join(root,'condition-validation.json'),JSON.stringify({passed:true,checks:conditionChecks},null,2));
+writeFileSync(join(root,'condition-validation.json'),JSON.stringify({passed:true,checks:conditionChecks,maxUpComponentDelta,upComponentTolerance:128*Number.EPSILON,otherConditions:'exact equality'},null,2));
+if(verifyOnly){console.log(JSON.stringify({passed:true,matchedRounds:conditionChecks.length,maxUpComponentDelta}));process.exit(0);}
 const stats=(s)=>[s.meanMs,s.medianMs,s.p95Ms].map(n=>n.toFixed(3)).join(' / ');
 const rows=gpu.current.map((c,i)=>`<tr><th>${c.name}</th><td>${stats(gpu.baseline[i].gpu.frame)}</td><td>${stats(c.gpu.frame)}</td><td>${stats(c.gpu['cloud-volume'])}</td><td>${c.gpu.frame.count} / ${c.gpu['cloud-volume'].count}</td></tr>`).join('');
 const checks=probes.map(p=>`<li><a href="${p.name}.json">${p.name}</a>：${p.checks.filter(c=>c.pass).length}/${p.checks.length} ${p.passed?'通过':'失败'}</li>`).join('');

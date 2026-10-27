@@ -116,7 +116,7 @@ worker、取消的 frame callback、部分上传、被替换纹理和 postproces
 - 14 个真实浏览器回归夹具共 152/152 检查通过：grazing-gpu 21，startup-lifecycle-final 10，pipeline-gpu 8，closure-gpu 6，atmosphere-gpu 9，lighting-gpu 6，cloud-gpu 21，water-cloud-gpu 14，high-cloud-gpu 11，satellite-lod 8，celestial-state 21，celestial-scene 7，celestial-gpu 6，celestial-optics 4。这是功能回归计数；空间矩阵、部分柱和缓存诊断的红色门槛单列，不包含在这 152 项中。
 - 浏览器各夹具的结果、截图、相机逐帧状态和 GPU 原始样本见忽略目录 `artifacts/stage5/` 及独立 `artifacts/stage5-evidence.zip`。
 - PNG 通过分块提取，检查完整 IEND 和解码；不交付截断图片。
-- 交付打包要求工作树已提交，保存同一 HEAD 的源码快照和 SHA-256 清单；另外逐项检查 28 组前后计时的相机、UTC、参数、风、FOV、drawingBuffer、quality、HDR 和曝光相同，结果保存为 `condition-validation.json`。独立红色诊断仍随包交付，不计入功能通过数。
+- 交付打包要求工作树已提交，保存同一 HEAD 的源码快照和 SHA-256 清单；另外逐项检查 28 组前后计时的相机、UTC、参数、风、FOV、drawingBuffer、quality、HDR 和曝光相同，结果保存为 `condition-validation.json`。相机 up 重复归一化的最大分量变化为 1.391×10⁻¹⁴，校验只为该向量允许 128 个 double epsilon，其它字段严格相等。独立红色诊断仍随包交付，不计入功能通过数。
 - 真实 DEM、真实 3D Tiles、跨 GPU/驱动表现未验证。保留并运行程序化地形/不透明实体回归；不能据此声称真实数据服务已覆盖。
 - 连续镜头的关键帧只能支持已观察区间的视觉判断；记录了 24 秒、783 帧状态和 25 个关键帧；抽查可见近景固定抖动颗粒和部分高云条纹重复。没有光流/逐像素时序参考时，不宣称“零闪烁”或画质百分比。没有引入 TAA。
 
@@ -132,4 +132,3 @@ worker、取消的 frame callback、部分上传、被替换纹理和 postproces
 全链 RGBA8 已运行并保存 full-rgba8-state.json；程序化 1150 m 山脊与椭球用同一 sun-horizon 镜头保存 terrain-*-state.json。另有太阳薄幕云/无云对照：1920×1080、垂直 FOV=6°、曝光8、同一 UTC、Cirrostratus、低云 coverage=0；它是隔离光学检查，不进入七场景性能对比。所有额外镜头参数与 enabled 状态保存在对应 JSON。
 
 最终保存 54 张通过 IEND/解码检查的 PNG。薄幕云太阳的 6° 窄视场显示大面积接近白色的前向散射和显示饱和；该图是运行证据，不据此宣称真实薄云画质通过。地形对照显示程序化山脊挡住相应地平线区域；实际 DEM/3D Tiles 仍未运行。
-
