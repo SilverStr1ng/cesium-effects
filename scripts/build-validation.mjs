@@ -13,5 +13,5 @@ cpSync(resolve('public/cesium'),resolve('artifacts/cesium'),{recursive:true});
 await build({configFile:false,root:source,base:'./',publicDir:false,
   define:{CESIUM_BASE_URL:JSON.stringify('/cesium/')},
   build:{outDir,emptyOutDir:true,chunkSizeWarningLimit:6000,
-    rollupOptions:{input:Object.fromEntries(['actual-entry','cloud-work','cloud-finite','cloud-layered-closure','cloud-scene','cloud-gpu','water-cloud-gpu','celestial-state','celestial-gpu','celestial-optics','celestial-scene','atmosphere-gpu','lighting-gpu','satellite-lod','cloud-pipeline','high-cloud-gpu','cloud-grazing','cloud-partial','cloud-cache','stage5-scene','cloud-startup','cloud-closure']
+    rollupOptions:{input:Object.fromEntries(['stage7-regressions','cloud-field','cloud-morphology','actual-entry','cloud-work','cloud-finite','cloud-layered-closure','cloud-scene','cloud-gpu','water-cloud-gpu','celestial-state','celestial-gpu','celestial-optics','celestial-scene','atmosphere-gpu','lighting-gpu','satellite-lod','cloud-pipeline','high-cloud-gpu','cloud-grazing','cloud-partial','cloud-cache','stage5-scene','cloud-startup','cloud-closure']
       .filter(name=>existsSync(resolve(source,`tests/${name}.html`))).map(name=>[name,resolve(source,`tests/${name}.html`)]))}}});

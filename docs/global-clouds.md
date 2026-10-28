@@ -2,6 +2,12 @@
 
 独立 effect：`src/effects/global-clouds/GlobalCloudEffect.ts`，注册 ID `global-clouds`。与 `hillaire-atmosphere` 分开管理；可以独立挂载，也可通过 `CloudLighting` 接口共享太阳、月亮和大气透射率纹理。
 
+## 当前主云形态与统计契约
+
+近景体素与远景有限段统计共享连续的世界包络：平滑低频场组织云片连接，胞状场补充局部隆起，权重随云型变化。细节主要侵蚀边缘。默认体素分支支持球面高度剪切，mip、内部深度和空区跳过使用保守伸缩界；不以摄像机高度切换形态。wind 与 detail、thickness 一起通过 worker 重建并原子采用匹配的统计表，density 仍是光深 scale。
+
+现行远景是第六阶段的正光深分量和相关累计 Q 响应，不再是下方历史版本的固定等效 sigma。近远混合发生在完整 L/T 积分之后。第七阶段的前后图、独立误差、实际成本与尚未通过的门槛见 [stage7-validation.md](stage7-validation.md)；历史性能表不能作为当前模型的性能承诺。
+
 ## 2026-10-23：独立冰云与分段空气输运
 
 当前高云提供 Cirrus（稀疏弯曲纤维）和 Cirrostratus（连续半透明薄幕）预设。组织方向来自球面流函数，极区连续、零速点平滑退化为各向同性；`highOpticalDepth` 明确为单位天气/材质掩码处的垂直柱 τᵥ，归一化高度剖面使厚度不再重复增加柱深。有限球壳路径取代平面斜程，高云有独立的冰云相函数、albedo 与弱高阶补偿。

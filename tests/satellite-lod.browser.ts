@@ -7,14 +7,26 @@ import environment from '../src/effects/hillaire-atmosphere/shaders/sky-irradian
 import lighting from '../src/effects/global-clouds/shaders/droplet-lighting.glsl?raw';
 import march from '../src/effects/global-clouds/shaders/march.glsl?raw';
 import cloudTransport from '../src/effects/global-clouds/shaders/transport.glsl?raw';
+interface TransitionRow {
+  envelope:number;footprint:number;patch:number;
+  actualLT:number[];referenceLT:number[];referenceCoarse:number[];
+  Terror:number;Lerror:number;convergence:number;
+}
 const output=document.querySelector('#result')!;
 const gpu=cloudProbe(document.querySelector<HTMLCanvasElement>('#probe')!);
 try{
+  const envelopeExperiment=new URLSearchParams(location.search).get('transition')==='envelope';
+  // Test-only single-factor experiment: vary bank connectivity without changing
+  // material statistics, march budget, filtering or illumination. Every variant
+  // is compared with its own independently integrated point-ray reference.
+  const densitySource=envelopeExperiment?('uniform float u_envelopeMix;\n'+density
+    .replace('mix(.72,.55,type)', 'u_envelopeMix*mix(.72,.55,type)')
+    .replace('mix(.61,.36,cover)-.035*(1.-type)', 'mix(mix(.76,.38,cover),mix(.61,.36,cover)-.035*(1.-type),u_envelopeMix)')):density;
   const footprint=17000*2*Math.tan(Math.PI/6)/(1080*.65);
-  const header='#define LAYERED_CLOUDS\n#define LIGHT_STEPS 5\n#define CLOUD_STEPS 64\n#define CLOUD_SUBSTEPS 3\n'+common+transport+density+voxel+
+  const header='#define LAYERED_CLOUDS\n#define LIGHT_STEPS 5\n#define CLOUD_STEPS 64\n#define CLOUD_SUBSTEPS 3\n'+common+transport+densitySource+voxel+
     'vec3 u_camera;uniform vec3 u_moon;uniform bool u_atmosphere;uniform float u_moonFraction,u_moonGain,u_pixelAngle,u_debugView;float debugFootprint=0.,debugPathLength=0.,debugWeather=0.,debugWeatherLength=0.;struct CloudPhases{vec3 sun;vec3 moon;};'+environment+lighting+
     'vec3 cloudSource(vec3 light){return light;}'+cloudTransport+march.slice(march.indexOf('CloudSegment integrateCloud'),march.indexOf('void main()'));
-  const main=`uniform float u_grid,u_footprint,u_reference,u_steps,u_statistics;void main(){
+  const main=`uniform float u_grid,u_footprint,u_reference,u_steps,u_statistics,u_resolved;void main(){
     float patchIndex=floor((gl_FragCoord.x-.5)/u_grid);float lon=-1.7+patchIndex*.37,lat=.45+sin(patchIndex*1.7)*.6;
     vec3 n=vec3(cos(lat)*cos(lon),cos(lat)*sin(lon),sin(lat));
     vec3 east=vec3(-sin(lon),cos(lon),0),north=cross(n,east);
@@ -24,6 +36,7 @@ try{
     cloudScreenRight=east;cloudScreenUp=north;
     u_camera=n*(Rg+u_base+u_thickness+17000.);
     if(u_reference<.5){
+      cloudRepresentation=u_resolved>.5?1:0;
       CloudSegment acc=integrateCloud(-n,vec2(17000.,17000.+u_thickness));
       out_FragColor=vec4(acc.L,acc.cloudT);
       if(u_statistics>.5)out_FragColor=vec4(farMoments.a,debugMipA,debugMipB,1.);
@@ -40,6 +53,39 @@ try{
   const sun=[-.2,-.8,.56].map(v=>v/Math.hypot(.2,.8,.56));
   const uniforms={...gpu.uniforms,u_steps:96,u_pixelAngle:footprint/17001.9,u_sun:sun,u_moon:sun.map(v=>-v),u_atmosphere:false,u_moonFraction:0,u_moonGain:0};
   const inputs={...gpu.inputs,u_cirrus:gpu.inputs.u_noise,u_transmittance:gpu.inputs.u_weather,u_multiple:gpu.inputs.u_weather,u_skyIrradiance:gpu.inputs.u_weather};
+  if(new URLSearchParams(location.search).has('transition')){
+    // Actual varying weather and voxel density. Independent high-step point
+    // rays are averaged in linear L/T; no far/Q/cache helper makes the reference.
+    // This is a model-accuracy diagnostic, separate from endpoint continuity.
+    const rows:TransitionRow[]=[];
+    for(const envelope of envelopeExperiment?[0,.25,.5,.75,1]:[1])for(const fp of [.35,.75,1.25,2.,4.]){
+      const sampleUniforms={...uniforms,u_envelopeMix:envelope};
+      const actual=gpu.draw(header+main,8,1,{...sampleUniforms,u_grid:1,u_footprint:fp,u_pixelAngle:fp/17001.9,u_reference:0},inputs,true).pixels;
+      const references=[{grid:32,steps:96},{grid:64,steps:192}].map(config=>{
+        const data=gpu.draw(header+main,config.grid*8,config.grid,{...sampleUniforms,u_grid:config.grid,u_steps:config.steps,u_footprint:fp,u_reference:1},inputs,true).pixels;
+        return Array.from({length:8},(_,patch)=>Array.from({length:4},(_,c)=>{let sum=0;for(let y=0;y<config.grid;y++)for(let x=0;x<config.grid;x++)sum+=data[(y*config.grid*8+patch*config.grid+x)*4+c];return sum/config.grid**2;}));
+      });
+      for(let patch=0;patch<8;patch++){const a=Array.from(actual.slice(patch*4,patch*4+4)),r=references[1][patch],convergence=Math.max(...r.map((v,c)=>Math.abs(v-references[0][patch][c])));rows.push({envelope,footprint:fp,patch,actualLT:a,referenceLT:r,referenceCoarse:references[0][patch],Terror:Math.abs(a[3]-r[3]),Lerror:Math.hypot(...a.slice(0,3).map((v,c)=>v-r[c])),convergence});}
+    }
+    const quadrature=[];
+    if(new URLSearchParams(location.search).get('transition')==='quadrature'){
+      // Controlled experiment only: average completed resolved L/T at subpixel
+      // footprints. This deliberately retains the production mip choice for
+      // each subpixel, rather than locking LOD0 or averaging density. Measure
+      // whether a small bounded rule can replace the biased local filter before
+      // considering its substantial per-pixel march/shadow cost in production.
+      for(const fp of [.35,.75,1.25,2.,4.])for(const grid of [1,3,5,9]){
+        const pixels=gpu.draw(header+main,grid*8,grid,{...uniforms,u_grid:grid,u_footprint:fp,u_pixelAngle:fp/(17001.9*grid),u_reference:0,u_resolved:1},inputs,true).pixels;
+        const cases=Array.from({length:8},(_,patch)=>{
+          const mean=Array.from({length:4},(_,c)=>{let sum=0;for(let y=0;y<grid;y++)for(let x=0;x<grid;x++)sum+=pixels[(y*grid*8+patch*grid+x)*4+c];return sum/grid**2;});
+          const reference=rows.find(r=>r.footprint===fp&&r.patch===patch)!.referenceLT;
+          return {patch,LT:mean,Terror:Math.abs(mean[3]-reference[3]),Lerror:Math.hypot(...mean.slice(0,3).map((v,c)=>v-reference[c]))};
+        });
+        quadrature.push({footprint:fp,grid,resolvedRays:grid*grid,cases});
+      }
+    }
+    output.textContent=JSON.stringify({complete:true,kind:'Independent point-ray average across the real representation band; diagnostic, not the .02 same-far-model spatial gate',reference:'32² x 96 and 64² x 192',rows,quadrature},null,2);
+  }else{
   const grid=64;
   const reference=gpu.draw(header+main,grid*8,grid,{...uniforms,u_grid:grid,u_footprint:footprint,u_reference:1},inputs,true).pixels;
   const actual=gpu.draw(header+main,8,1,{...uniforms,u_grid:1,u_footprint:footprint,u_reference:0},inputs,true).pixels;
@@ -107,5 +153,6 @@ try{
     {name:'final filtered field remains continuous at polar frames and longitude seam',pass:fieldContinuity.every(c=>c.maxDelta<.003),fieldContinuity}];
   output.textContent=JSON.stringify({passed:checks.every(c=>c.pass),initializationMs:gpu.initializationMs,reference:{grid,steps:96},checks},null,2);
   document.title=checks.every(c=>c.pass)?'PASS · Satellite LOD':'FAIL · Satellite LOD';
+  }
   }
 }catch(error){output.textContent=String(error);document.title='ERROR · Satellite LOD';}finally{gpu.destroy();}
