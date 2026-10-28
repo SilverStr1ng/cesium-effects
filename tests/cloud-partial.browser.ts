@@ -24,8 +24,9 @@ try{
   const reference=header+`void main(){vec3 n,east,north;setupColumn(n,east,north);
     vec2 uv=gl_FragCoord.xy/u_grid-.5;vec3 p=normalize(n*(Rg+u_base)+u_filterF*(east*uv.x+north*uv.y))*(Rg+u_base);
     vec2 w=cloudWeather(p,u_filterF);if(w.x<=0.){out_FragColor=vec4(0);return;}
-    vec3 q=advect(p);float cell=cellular(q+cloudWarp(q)+u_seed*.43,29.713,.04).r;
-    float threshold=mix(.76,.38,w.x),cluster=smoothstep(threshold-.035,threshold+.085,cell);
+    vec3 q=advect(p);vec4 bank=cellular(q,71.3,.04);float small=cellular(q+(bank.rga-.5)*3.4+u_seed*.43,29.713,.04).r;
+    float cell=mix(small,bank.a,mix(.72,.55,w.y));
+    float threshold=mix(.61,.36,w.x)-.035*(1.-w.y),cluster=smoothstep(threshold-.05,threshold+.085,cell);
     // Integrate the SAME local profile fraction in each column BEFORE taking
     // E[T]. This reference never calls farCloudDensity or prepareFarColumns.
     float scale=u_density*u_thickness/3.8*cluster*smoothstep(0.,.2,w.x)*remaining(u_h0);

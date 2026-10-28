@@ -156,7 +156,8 @@ try{
       full+=rho*ds;until=t0+voxelEmptyDistance(p+d*t0,sampleFootprint);
       if(t1<=until)skipped+=1.;else fast+=rho*ds;}
     out_FragColor=vec4(abs(exp(-full)-exp(-fast))*100.,skipped/96.,0,1);}`;
-  const skipParameters:Record<string,number>[]=[{}, {u_seed:971,u_windAngle:.013,u_evolution:7}];
+  const skipParameters:Record<string,number>[]=[{}, {u_seed:971,u_windAngle:.013,u_evolution:7},
+    {u_windSpeed:0},{u_seed:37,u_windSpeed:120,u_windAngle:.013,u_evolution:7}];
   const skipRuns=skipParameters.map(p=>run(common+density,skipFixture,p));
   let skipError=0,skipped=0;for(const bytes of skipRuns)for(let i=0;i<512;i++){skipError=Math.max(skipError,bytes[i*4]/255/100);skipped+=bytes[i*4+1]/255*96;}
   const voxelRepeat=run(common+density,`void main(){float i=mod(floor(gl_FragCoord.x),256.);vec3 p=vec3(i*.19-6000.,sin(i*.3)*20.,cos(i*.7)*35.);

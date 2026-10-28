@@ -1,5 +1,7 @@
 import {mkdirSync,writeFileSync} from 'node:fs';
-import {filteredMean,spatialMean} from '../tests/farColumnReference';
+import * as current from '../tests/farColumnReference';
+import * as frozen from '../tests/fixtures/stage6/farColumnReference';
+const legacy=process.argv.includes('--legacy'),{filteredMean,spatialMean}=legacy?frozen:current;
 
 // Diagnostic domain, not a universal bound. Failing suggested accuracy targets
 // are retained in the report and make this command fail; do not loosen .02.
@@ -39,13 +41,13 @@ const accuracy=unconverged.map(row=>{
 });
 const failures=accuracy.filter(row=>Math.abs(row.opacityError)>.02);
 const referenceFailures=accuracy.filter(row=>Math.abs(row.referenceConvergence)>.002);
-const report={kind:'CPU same-far-model local spatial average; NOT final GPU L/T',
+const report={kind:'CPU same-far-model local spatial average; NOT final GPU L/T',morphology:legacy?'f433c8e frozen':'stage7',
   conditions:{seed:13,coverage:.62,density:1.1,baseKm:1.5,thicknessKm:3.8,detail:.55,type:0,windAngle:0,evolution:0},
   targets:{opacityAbsolute:.02,referenceConvergence:.002},rows,accuracy,failures,referenceFailures,convergence:unconverged,referenceRefinements:refinements,parameterChecks,
   limits:['Parameter checks isolate quadrature of the existing table. They do not validate the table against changed near voxels.',
-    'The material table is baked for detail=.55; far-model detail sensitivity and partial-column correlation remain unvalidated.',
+    'This matrix uses the default conditional table; separate material and partial checks retain their own definitions.',
     'No GPU times, screenshots or temporal conclusions are produced by this CPU command.']};
-mkdirSync('artifacts/stage6',{recursive:true});writeFileSync('artifacts/stage6/grazing-matrix.json',JSON.stringify(report,null,2));
+mkdirSync('artifacts/stage7/data',{recursive:true});writeFileSync(`artifacts/stage7/data/${legacy?'legacy-':''}grazing-matrix.json`,JSON.stringify(report,null,2));
 console.log(JSON.stringify({cases:rows.length,failures:failures.map(r=>({patch:r.patch,footprint:r.footprint,mu:r.mu,rotation:r.rotation,error:r.opacityError})),
   maxOpacityError:Math.max(...accuracy.map(r=>Math.abs(r.opacityError))),maxInitialReferenceDelta:Math.max(...unconverged.map(r=>Math.abs(r.convergence))),
   maxFinalReferenceDelta:Math.max(...accuracy.map(r=>Math.abs(r.referenceConvergence))),

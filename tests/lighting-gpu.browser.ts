@@ -60,13 +60,15 @@ try{
   gl.texImage3D(gl.TEXTURE_3D,0,gl.RGBA8,2,2,2,0,gl.RGBA,gl.UNSIGNED_BYTE,bytes);
   for(const p of [gl.TEXTURE_WRAP_S,gl.TEXTURE_WRAP_T,gl.TEXTURE_WRAP_R])gl.texParameteri(gl.TEXTURE_3D,p,gl.REPEAT);
   for(const p of [gl.TEXTURE_MIN_FILTER,gl.TEXTURE_MAG_FILTER])gl.texParameteri(gl.TEXTURE_3D,p,gl.NEAREST);
-  const voxelFixture=common+`uniform sampler3D u_voxels;uniform bool u_voxelReady,u_skipVoxels;uniform float u_seed,u_evolution,u_base,u_thickness;
+  const voxelFixture=common+`uniform sampler3D u_voxels;uniform bool u_voxelReady,u_skipVoxels;uniform float u_seed,u_evolution,u_base,u_thickness,u_windSpeed;
     int cloudLayer=0;vec3 advect(vec3 p){return p;}float farCloudWeight(float footprint){return 0.;}`+voxel+`
     void main(){vec3 p=vec3(gl_FragCoord.x*.017,0,Rg+u_base+10.);vec3 q=voxelPosition(p);
       float a=voxelAt(q+u_seed*.23,7.83,.01).r,b=voxelAt(voxelRotate(q)+u_seed*.31,13.57,.01).r;
       out_FragColor=vec4(voxelBodyDepth(p,.01),a>b*.8?0.:1.,0,1);}`;
-  const depths=gpu.draw(voxelFixture,512,1,{u_voxelReady:true,u_base:20,u_thickness:40,u_seed:13,u_evolution:0},{u_voxels:{texture:voxels,target:gl.TEXTURE_3D}},true).pixels;
-  let depthError=0,countA=0,countB=0;for(let i=0;i<512;i++){const b=depths[i*4+1]>.5;b?countB++:countA++;depthError=Math.max(depthError,Math.abs(depths[i*4]-(128/255)*(16/128)*(b?13.57:7.83)));}
+  const depths=gpu.draw(voxelFixture,512,1,{u_voxelReady:true,u_base:20,u_thickness:40,u_seed:13,u_evolution:0,u_windSpeed:0},{u_voxels:{texture:voxels,target:gl.TEXTURE_3D}},true).pixels;
+  // Zero shear retains the explicit 1% conservative metric margin. Expected
+  // values are computed independently of voxelBodyDepth, in kilometres.
+  let depthError=0,countA=0,countB=0;for(let i=0;i<512;i++){const b=depths[i*4+1]>.5;b?countB++:countA++;depthError=Math.max(depthError,Math.abs(depths[i*4]-(128/255)*(16/128)*(b?13.57:7.83)/1.01));}
   gl.deleteTexture(voxels);
   checks.push({name:'both voxel domains convert internal depth to their own kilometre scale',pass:depthError<1e-5&&countA>0&&countB>0,depthError,countA,countB});
 

@@ -1,5 +1,13 @@
 float debugMipA=-1.,debugMipB=-1.;
-vec3 voxelPosition(vec3 p){return advect(p)+vec3(.81,.27,.13)*u_evolution;}
+// Height shear reaches the production voxel branch. A spherical flow has no
+// polar frame switch and vanishes continuously at its stagnation points.
+// Bound the shear singular value plus its spherical-flow derivative.
+float voxelStretch(){float w=clamp(u_windSpeed/80.,0.,1.5);return sqrt(1.+.0484*w*w)+.22*w+.01;}
+vec3 voxelPosition(vec3 p){
+    vec3 q=advect(p),n=normalize(q);float h=length(q)-Rg-u_base;
+    vec3 flow=cross(vec3(.23,-.37,.90),n);
+    return q+flow*(.22*clamp(u_windSpeed/80.,0.,1.5)*h*h/u_thickness)+vec3(.81,.27,.13)*u_evolution;
+}
 vec3 voxelRotate(vec3 q){return vec3(dot(q,vec3(.36,.48,-.8)),dot(q,vec3(-.8,.6,0)),dot(q,vec3(.48,.64,.6)));}
 vec4 voxelAt(vec3 q,float scale,float footprint){
     float lod=max(0.,log2(max(.001,footprint)*128./scale));
@@ -8,6 +16,7 @@ vec4 voxelAt(vec3 q,float scale,float footprint){
 }
 vec4 voxelShape(vec3 p,float footprint){
     vec3 q=voxelPosition(p);
+    footprint*=voxelStretch();
     vec4 a=voxelAt(q+u_seed*.23,7.83,footprint),b=voxelAt(voxelRotate(q)+u_seed*.31,13.57,footprint);
     // The union's support is bounded by the minimum of both empty distances.
     // Canonicalize internal depth to domain A units before selecting the union.
@@ -22,7 +31,7 @@ float voxelEmptyDistance(vec3 p,float footprint){
     float b=textureLod(u_voxels,(voxelRotate(q)+u_seed*.31)/13.57,0.).g*(16./128.)*13.57;
     // Trilinear mip filtering includes the next coarser level. Box support plus
     // interpolation reaches < 3*sqrt(3)*footprint; round up conservatively.
-    return max(0.,min(a,b)-6.*footprint);
+    return max(0.,min(a,b)/voxelStretch()-6.*footprint);
 }
 float voxelBodyDepth(vec3 p,float footprint){
     if(!u_voxelReady||cloudLayer!=0)return 0.;
@@ -30,5 +39,5 @@ float voxelBodyDepth(vec3 p,float footprint){
     float h=length(p)-Rg-u_base;
     // A local interior proxy, capped by the layer boundaries. Weather/erosion
     // can remove mass, so illumination also weights it by the actual density.
-    return max(0.,min(v.b*(16./128.)*7.83,min(h,u_thickness-h)));
+    return max(0.,min(v.b*(16./128.)*7.83/voxelStretch(),min(h,u_thickness-h)));
 }

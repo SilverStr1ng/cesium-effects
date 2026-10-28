@@ -32,8 +32,10 @@ export function farField(){
     if(cover<=0)return [0,0,0,0,top];
     cover=clamp(cover+(weatherAt(p,2)-.5)*.7+(weatherAt(p,3)-.5)*1.3);
     if(cover<=0)return [0,0,0,0,top];
-    const q=p.map((v,i)=>v+(noiseAt(p,71.3,[0,1,3][i])-.5)*3.4+13*.43) as V3;
-    const cell=noiseAt(q,29.713,0),threshold=mix(.76,.38,cover),cluster=smooth(threshold-.035,threshold+.085,cell);
+    const bank=[0,1,2,3].map(c=>noiseAt(p,71.3,c));
+    const q=p.map((v,i)=>v+(bank[[0,1,3][i]]-.5)*3.4+13*.43) as V3;
+    const cell=mix(noiseAt(q,29.713,0),bank[3],mix(.72,.55,type));
+    const threshold=mix(.61,.36,cover)-.035*(1-type),cluster=smooth(threshold-.05,threshold+.085,cell);
     const scale=density*thickness/3.8*slant*cluster*smooth(0,.2,cover)*fraction;
     const uv:V3=[clamp(((1-cover)*.22+(1-cluster)*.3)/.52)*31,type*31,clamp((Math.log2(Math.max(.03125,scale))+5)/12)*31];
     const raw=[0,1,2,3].map(c=>volume(optics,32,uv,c)),thin=Math.min(1,scale/.03125);

@@ -1,12 +1,13 @@
 import {sampleVolume,VOXEL_SIZE} from './VoxelCloudField';
 import {CUMULUS_NOISE_SIZE} from './CumulusNoise';
+import {cloudMaterialPosition,cloudMaterialStretch} from './CloudMorphology';
 
 export const CLOUD_OPTICS_SIZE=32;
-export const CLOUD_OPTICS_VERSION=3;
+export const CLOUD_OPTICS_VERSION=6;
 export const CLOUD_COMPONENTS=8;
-export interface CloudOpticsMaterial {detail:number;thickness:number;}
-export const defaultOpticsMaterial:CloudOpticsMaterial={detail:.55,thickness:3.8};
-export const opticsMaterialKey=(m:CloudOpticsMaterial)=>`${CLOUD_OPTICS_VERSION}/${m.detail}/${m.thickness}`;
+export interface CloudOpticsMaterial {detail:number;thickness:number;wind?:number;}
+export const defaultOpticsMaterial:CloudOpticsMaterial={detail:.55,thickness:3.8,wind:24};
+export const opticsMaterialKey=(m:CloudOpticsMaterial)=>`${CLOUD_OPTICS_VERSION}/${m.detail}/${m.thickness}/${m.wind??24}`;
 const smooth=(a:number,b:number,x:number)=>{const t=Math.max(0,Math.min(1,(x-a)/(b-a)));return t*t*(3-2*t);};
 const mix=(a:number,b:number,t:number)=>a+(b-a)*t;
 /** Average transmission, not density: unresolved opaque columns still have gaps. */
@@ -46,16 +47,17 @@ export function createCloudOpticsData(voxels:Uint8Array,noise:Uint8Array,materia
       const {n}=origins[c];
       const samples=Array.from({length:heights},(_,j)=>{
         const h=(j+.5)/heights,p=n.map(v=>v*(6378.137+1.5+material.thickness*top*h));
-        const rotated=[p[0]*.36+p[1]*.48-p[2]*.8,-p[0]*.8+p[1]*.6,p[0]*.48+p[1]*.64+p[2]*.6];
-        const a=p.map(v=>v+13*.23),b=rotated.map(v=>v+13*.31);
+        const q=cloudMaterialPosition(p,1.5,material.thickness,material.wind);
+        const rotated=[q[0]*.36+q[1]*.48-q[2]*.8,-q[0]*.8+q[1]*.6,q[0]*.48+q[1]*.64+q[2]*.6];
+        const a=q.map(v=>v+13*.23),b=rotated.map(v=>v+13*.31);
         const ra=voxelAt(a,7.83,0),rb=voxelAt(b,13.57,0)*.8;
         const morphology=ra>rb?voxelAt(a,7.83,3):voxelAt(b,13.57,3);
-        const bodyDepth=(ra>rb?voxelAt(a,7.83,2)*7.83:voxelAt(b,13.57,2)*13.57)*(16/128);
+        const bodyDepth=(ra>rb?voxelAt(a,7.83,2)*7.83:voxelAt(b,13.57,2)*13.57)*(16/128)/cloudMaterialStretch(material.wind);
         const fine=[0,1,2,3].map(channel=>noiseAt(p.map(v=>v+13*.17),1.61,channel));
         const folded=Math.abs(2*Math.abs(2*fine[1]-1)-1);
         let detail=mix(1-Math.abs(2*fine[3]-1),fine[0]*.55+fine[1]*.3+fine[2]*.15,morphology);
         detail=mix(detail,mix(1-folded**3,folded**2,morphology),1-smooth(.015,.12,.02));
-        return {field:Math.max(ra,rb)-(1-detail)*material.detail*.28-h**mix(4,2.8,type)*.4,
+        return {field:Math.max(ra,rb)-h**mix(4,2.8,type)*.4,erosion:(1-detail)*material.detail*.28,
           interior:1-Math.exp(-3*Math.max(0,Math.min(bodyDepth,material.thickness*top*h,material.thickness-material.thickness*top*h))),
           // Normalize the table's depth to 3.8 km. Runtime thickness/3.8 is
           // still a scale, but physical sample locations above change its law.
@@ -63,8 +65,9 @@ export function createCloudOpticsData(voxels:Uint8Array,noise:Uint8Array,materia
       });
       for(let x=0;x<size;x++){
         const cut=x/(size-1)*.52;
-        depths[x][c]=samples.reduce((tau,s)=>tau+smooth(0,.324,s.field-cut)*s.weight,0);
-        interiors[x][c]=samples.reduce((sum,s)=>{const body=smooth(0,.324,s.field-cut);return sum+body*s.weight*s.interior*smooth(.1,3,body*9);},0)/Math.max(1e-8,depths[x][c]);
+        const body=(s:typeof samples[number])=>{const f=s.field-cut;return smooth(0,.324,f-s.erosion*(1-smooth(.06,.45,f)));};
+        depths[x][c]=samples.reduce((tau,s)=>tau+body(s)*s.weight,0);
+        interiors[x][c]=samples.reduce((sum,s)=>{const rho=body(s);return sum+rho*s.weight*s.interior*smooth(.1,3,rho*9);},0)/Math.max(1e-8,depths[x][c]);
       }
     }
     for(let x=0;x<size;x++){

@@ -61,6 +61,17 @@ vec3 cloudWarp(vec3 q){
     vec3 warp=cellular(q,71.3,.01).rga;
     return (warp-.5)*3.4;
 }
+// Shared world envelope for resolved voxels and statistical child columns.
+// A smooth signed field connects banks; cellular distance alone isolates each
+// peak into similarly spaced islands. Cumulus keeps more local lobes than the
+// sheet types. The two fetches also supply the continuous position warp.
+float cloudCluster(vec3 column,float cover,float type){
+    vec4 bank=cellular(column,71.3,.04);
+    vec4 lobes=cellular(column+(bank.rga-.5)*3.4+u_seed*.43,29.713,.04);
+    float cell=mix(lobes.r,bank.a,mix(.72,.55,type));
+    float threshold=mix(.61,.36,cover)-.035*(1.-type);
+    return smoothstep(threshold-.05,threshold+.085,cell);
+}
 float lobes(vec3 q,float footprint){
     vec4 a=cellular(q+u_seed*.23,7.83,footprint);
     vec3 rotated=vec3(dot(q,vec3(.36,.48,-.8)),dot(q,vec3(-.8,.6,0)),dot(q,vec3(.48,.64,.6)));
@@ -272,8 +283,7 @@ void prepareFarColumns(vec3 p,float footprint){
         float top=cloudTypeTop(weather.y);farTop+=top*weight;
         if(weather.x<=0.)continue;
         vec3 q=advect(samplePoint);
-        float cell=cellular(q+cloudWarp(q)+u_seed*.43,29.713,.04).r;
-        float threshold=mix(.76,.38,weather.x),cluster=smoothstep(threshold-.035,threshold+.085,cell);
+        float cluster=cloudCluster(q,weather.x,weather.y);
         if(cluster>0.){
         float scale=u_density*u_thickness/3.8*cloudSlant*cluster*smoothstep(0.,.2,weather.x)*farCommonFraction;
         if(farBuildingResponse){
@@ -362,9 +372,7 @@ float lowCloudDensity(vec3 p,float footprint,bool coarse){
     // A vertically coherent mesoscale mask creates genuine sky windows. A
     // different random gap at every altitude still accumulates into overcast.
     vec3 column=normalize(q)*(Rg+u_base);
-    float cell=cellular(column+cloudWarp(column)+u_seed*.43,29.713,max(footprint,.04)).r;
-    float threshold=mix(.76,.38,cover);
-    float cluster=smoothstep(threshold-.035,threshold+.085,cell);
+    float cluster=cloudCluster(column,cover,type);
     if(cluster<=.001)return 0.;
     if(u_voxelReady){
         vec4 volume=voxelShape(p,footprint);
@@ -377,7 +385,7 @@ float lowCloudDensity(vec3 p,float footprint,bool coarse){
             float detail=mix(wisps,billows,volume.a);
             detail=mix(detail,mix(1.-pow(folded,3.),folded*folded,volume.a),1.-smoothstep(.015,.12,footprint));
             // Erosion only removes material, preserving the baked distance bound.
-            field-=(1.-detail)*u_detail*.28*(1.-smoothstep(.15,.8,footprint));
+            field-=(1.-detail)*u_detail*.28*(1.-smoothstep(.06,.45,field))*(1.-smoothstep(.15,.8,footprint));
         }
         float body=smoothstep(0.,.32+min(.15,footprint*.2),field);
         return body*cluster*smoothstep(0.,.2,cover)*smoothstep(0.,.045,h)*(1.-smoothstep(.9,1.,h))*9.*u_density;
