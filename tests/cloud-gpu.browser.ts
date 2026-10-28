@@ -64,7 +64,7 @@ try{
     gl.uniform1f(gl.getUniformLocation(program,'u_highFilterGrid'),4);
     gl.uniform1i(gl.getUniformLocation(program,'u_weather'),1);gl.uniform1f(gl.getUniformLocation(program,'u_exposure'),1.25);gl.uniform1f(gl.getUniformLocation(program,'u_seed'),13);
     for(const name of ['u_transmittance','u_multiple','u_skyIrradiance'])gl.uniform1i(gl.getUniformLocation(program,name),1);
-    for(const [name,value] of Object.entries({u_columnGrid:12,u_base:1.5,u_thickness:3.8,u_coverage:.85,u_density:1.1,u_detail:.55,u_windAngle:0,u_windSpeed:24,u_evolution:0,u_cloudType:0,u_highBase:9,u_highThickness:1.5,u_highCoverage:.35,u_highAngle:0,u_highType:0,u_highOpticalDepth:.35,u_highAnisotropy:.78,u_highAlbedo:.98,u_highMultiple:.12,u_moonFraction:1,u_moonGain:1,...parameters}))gl.uniform1f(gl.getUniformLocation(program,name),value);
+    for(const [name,value] of Object.entries({u_columnGrid:12,u_columnSections:2,u_columnQuadrature:4,u_columnOrders:3,u_base:1.5,u_thickness:3.8,u_coverage:.85,u_density:1.1,u_detail:.55,u_windAngle:0,u_windSpeed:24,u_evolution:0,u_cloudType:0,u_highBase:9,u_highThickness:1.5,u_highCoverage:.35,u_highAngle:0,u_highType:0,u_highOpticalDepth:.35,u_highAnisotropy:.78,u_highAlbedo:.98,u_highMultiple:.12,u_moonFraction:1,u_moonGain:1,...parameters}))gl.uniform1f(gl.getUniformLocation(program,name),value);
     for(const [name,v] of Object.entries(vectors))gl.uniform3f(gl.getUniformLocation(program,name),v[0],v[1],v[2]);
     gl.viewport(0,0,512,1);gl.drawArrays(gl.TRIANGLES,0,3);
     const bytes=new Uint8Array(512*4);gl.readPixels(0,0,512,1,gl.RGBA,gl.UNSIGNED_BYTE,bytes);

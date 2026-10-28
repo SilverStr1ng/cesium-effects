@@ -29,10 +29,14 @@ function reference(detail:number,thickness:number,density:number,slant:number,he
   return {opacity,coverage};
 }
 const rows=[];
+const materialTables=new Map<string,Uint8Array>();
 for(const [detail,thickness,density] of [[.55,3.8,1.1],[0,3.8,1.1],[1,3.8,1.1],[.55,1,1.1],[.55,8,1.1],[.55,3.8,.5],[.55,3.8,2]])for(const slant of [1,10]){
   const scale=density*thickness/3.8*slant,uv=[.1/.52*31,.75*31,clamp((Math.log2(scale)+5)/12)*31] as [number,number,number];
   const actual=sampleVolume(table,32,...uv,0),a=reference(detail,thickness,density,slant,96),b=reference(detail,thickness,density,slant,192);
-  rows.push({detail,thickness,density,slant,tableOpacity:actual,reference:a,reference192:b,error:actual-a.opacity,convergence:b.opacity-a.opacity});
+  const key=`${detail}/${thickness}`;if(!materialTables.has(key))materialTables.set(key,createCloudOptics(voxels,noise,{detail,thickness}));
+  const updated=sampleVolume(materialTables.get(key)!,32,...uv,0);
+  rows.push({detail,thickness,density,slant,oldTableOpacity:actual,tableOpacity:updated,reference:a,reference192:b,oldError:actual-b.opacity,error:updated-b.opacity,convergence:b.opacity-a.opacity,pass:Math.abs(updated-b.opacity)<=.02&&Math.abs(b.opacity-a.opacity)<=.002});
 }
-mkdirSync('artifacts/stage5',{recursive:true});writeFileSync('artifacts/stage5/material-range.json',JSON.stringify({kind:'Fixed conditional material table applicability; type=.75, cut=.1, 256 same-seed columns. Not a spatial/local image bound.',rows},null,2));
+mkdirSync('artifacts/stage6',{recursive:true});writeFileSync('artifacts/stage6/material-range.json',JSON.stringify({passed:rows.every(r=>r.pass),targets:{opacity:.02,convergence:.002},kind:'Parameterized conditional material table; type=.75, cut=.1, 256 same-seed columns. Not a spatial/local image bound.',rows},null,2));
 console.log(JSON.stringify(rows.map(r=>({detail:r.detail,thickness:r.thickness,density:r.density,slant:r.slant,error:r.error,convergence:r.convergence})),null,2));
+if(rows.some(r=>!r.pass))process.exitCode=1;

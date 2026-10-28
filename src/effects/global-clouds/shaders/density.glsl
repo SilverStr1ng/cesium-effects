@@ -3,6 +3,7 @@ uniform sampler2D u_weather;
 uniform sampler3D u_noise;
 uniform sampler3D u_voxels;
 uniform sampler3D u_cloudOptics;
+uniform sampler3D u_cloudComponents;
 uniform sampler3D u_cirrus;
 uniform sampler2D u_iceRibbon;
 uniform sampler3D u_iceAnisotropic;
@@ -17,6 +18,11 @@ uniform float u_base,u_thickness,u_coverage,u_density,u_detail,u_windAngle,u_see
 uniform float u_cloudType,u_highBase,u_highThickness,u_highCoverage,u_highAngle;
 uniform float u_highType,u_highOpticalDepth,u_highAnisotropy,u_highAlbedo,u_highMultiple;
 uniform float u_highFilterGrid;
+#ifdef CLOUD_DIAGNOSTICS
+vec4 cloudWork=vec4(0); // distribution builds, spatial taps, table queries, legacy cache hits
+vec3 cloudCacheMiss=vec3(0); // anchor movement, footprint, slant
+vec2 cloudBranchWork=vec2(0); // resolved/statistical segment calls
+#endif
 int cloudLayer=0;
 float cloudSlant=1.;
 vec3 cloudRay=vec3(0,0,1);
@@ -69,6 +75,10 @@ vec2 cloudWeather(vec3 p,float footprint){
     return vec2(cover,cloudTypeValue(w.g));
 }
 vec4 materialOptics(float cut,float type,float scale){
+    if(scale<=0.)return vec4(0);
+    #ifdef CLOUD_DIAGNOSTICS
+    cloudWork.z+=1.;
+    #endif
     vec3 uv=vec3(clamp(cut/.52,0.,1.),type,clamp((log2(max(.03125,scale))+5.)/12.,0.,1.));
     vec4 moments=texture(u_cloudOptics,(uv*31.+.5)/32.);
     float thin=min(1.,scale/.03125);
@@ -77,6 +87,99 @@ vec4 materialOptics(float cut,float type,float scale){
 vec4 farMoments=vec4(0);
 vec3 farAnchor=vec3(1e8);
 float farTop=1.,farFootprint=-1.,farSlant=-1.,farShape=64.;
+// Segment responses are accumulated before averaging the subcolumns. Q(s)
+// starts at the ACTUAL clipped observation point, including an inside camera.
+// A single distribution is retained through all height intervals of that shell.
+const int FAR_RESPONSE_LIMIT=8;
+uniform float u_columnSections,u_columnQuadrature,u_columnOrders,u_columnComponents;
+vec4 farResponse[FAR_RESPONSE_LIMIT+1];
+vec3 farSunResponse[FAR_RESPONSE_LIMIT],farMoonResponse[FAR_RESPONSE_LIMIT];
+vec3 farPathOrigin,farPathDirection,farSunDirection,farMoonDirection;
+vec2 farPath;
+int farResponseCount=8;
+float farPathCurve=0.;
+bool farBuildingResponse=false,farSunActive=false,farMoonActive=false;
+bool farCommonMode=false;
+float farCommonFraction=1.;
+float farNode(int i){float x=float(i)/float(farResponseCount);return mix(farPath.x,farPath.y,mix(x,x*x,farPathCurve));}
+float columnProfile(float h){return h<=0.||h>=1.?0.:12.*h*(1.-h)*(1.-h);}
+float columnCdf(float h){h=clamp(h,0.,1.);return h*h*(6.-8.*h+3.*h*h);}
+// Gauss integration on the finite spherical child shell. The lower shell is
+// already clipped by the caller; this also clips each child's distinct top.
+// Four points per half avoid a plane-parallel 1/mu singularity at tangency.
+float columnPathProfile(vec3 origin,vec3 direction,vec2 path,float top){
+    float height=u_thickness*top;
+    vec2 outer=sphere(origin,direction,Rg+u_base+height);
+    path=vec2(max(path.x,outer.x),min(path.y,outer.y));
+    if(path.y<=path.x)return 0.;
+    vec2 inner=sphere(origin,direction,Rg+u_base);
+    float sum=0.;
+    for(int section=0;section<int(u_columnSections);section++){
+      vec2 part=section==0?vec2(path.x,min(path.y,inner.x)):vec2(max(path.x,inner.y),path.y);
+      if(inner.y<=path.x||inner.x>=path.y){if(section>0)break;part=path;}
+      if(part.y<=part.x)continue;
+      vec3 first=origin+direction*part.x,last=origin+direction*part.y;
+      float r0=length(first),r1=length(last),meanMu=dot(first+last,direction)/(r0+r1);
+      // On short, steep paths curvature is second order. Use the integrated
+      // cubic profile with the exact endpoint mean radial velocity. The dot
+      // identity avoids subtracting two almost equal planetary radii for mu.
+      // Grazing/long paths retain spherical quadrature and are tested separately.
+      if(abs(meanMu)>.25&&part.y-part.x<20.){
+        sum+=abs(columnCdf((r1-Rg-u_base)/height)-columnCdf((r0-Rg-u_base)/height))/abs(meanMu);continue;
+      }
+      float mid=(part.x+part.y)*.5,radius=(part.y-part.x)*.5;
+      for(int j=0;j<int(u_columnQuadrature);j++){
+        float x=j==0?-.8611363116:j==1?-.3399810436:j==2?.3399810436:.8611363116;
+        float w=j==0||j==3?.3478548451:.6521451549;
+        float h=(length(origin+direction*(mid+radius*x))-Rg-u_base)/height;
+        sum+=w*columnProfile(h)*radius/height;
+      }
+    }
+    return sum;
+}
+void accumulateColumnResponse(float cut,float type,float scale,float weight){
+    // Positive, correlated depth components, fetched ONCE per spatial column.
+    // RG encodes log(1+tau)/log(65) in 16 bits; B is population / 256;
+    // A is mean interior. Zero-depth population is implicit and remains clear.
+    // Do not confuse this probability with CloudOptics.A = P(T < .9).
+    vec3 component[8];float population=0.;
+    for(int k=0;k<int(u_columnComponents);k++){
+      vec4 value=texture(u_cloudComponents,vec3((vec2(clamp(cut/.52,0.,1.),type)*31.+.5)/32.,(float(k)+.5)/8.));
+      float tau=(exp((value.r*65280.+value.g*255.)/65535.*log(65.))-1.)*scale;
+      component[k]=vec3(tau,value.b*255./256.,value.a);population+=component[k].y;
+      #ifdef CLOUD_DIAGNOSTICS
+      cloudWork.z+=1.;
+      #endif
+    }
+    if(population<=0.)return;
+    float top=cloudTypeTop(type),previous=0.;
+    for(int i=1;i<=farResponseCount;i++){
+      float end=farNode(i),start=farNode(i-1);
+      float cumulative=farCommonMode?farCommonFraction*float(i)/float(farResponseCount):columnPathProfile(farPathOrigin,farPathDirection,vec2(farPath.x,end),top);
+      vec3 p=farPathOrigin+farPathDirection*((start+end)*.5);
+      bool sun=farSunActive&&!planetOccludes(p,farSunDirection),moon=farMoonActive&&dot(normalize(p),farSunDirection)<.04&&!planetOccludes(p,farMoonDirection);
+      float sunPath=sun?columnPathProfile(p,farSunDirection,vec2(0,1.5),top):0.,moonPath=moon?columnPathProfile(p,farMoonDirection,vec2(0,1.5),top):0.;
+      for(int k=0;k<int(u_columnComponents);k++){
+        vec3 c=component[k];float T=exp(-c.x*cumulative),absorbed=max(0.,exp(-c.x*previous)-T),w=weight*c.y;
+        farResponse[i]+=w*vec4(1.-T,(1.-T)*c.z,c.x*cumulative>-log(.9)?1.:0.,c.x*cumulative);
+        // Use the resolved voxel model's scattering-order probability and
+        // forward extinction for EACH component before averaging its L/T.
+        // Omitting these made the far branch brighter when quality/LOD changed.
+        float probability=mix(.18,1.,c.z);
+        if(sun){
+          float forward=smoothstep(.35,.95,dot(farPathDirection,farSunDirection));
+          vec3 extinction=vec3(1.,mix(.55,.32,forward*c.z),mix(.28,.12,forward*c.z));
+          farSunResponse[i-1]+=w*absorbed*vec3(1.,probability,probability)*exp(-c.x*sunPath*extinction);
+        }
+        if(moon){
+          float forward=smoothstep(.35,.95,dot(farPathDirection,farMoonDirection));
+          vec3 extinction=vec3(1.,mix(.55,.32,forward*c.z),mix(.28,.12,forward*c.z));
+          farMoonResponse[i-1]+=w*absorbed*vec3(1.,probability,probability)*exp(-c.x*moonPath*extinction);
+        }
+      }
+      previous=cumulative;
+    }
+}
 // Midpoint rules 4, 12, 36 are nested. Weights blend completed optical moments,
 // not the noise or extinction before their nonlinear transfer functions.
 float columnRuleWeight(int index,int grid,float medium,float fine){
@@ -101,10 +204,16 @@ void columnStripBounds(float y,vec2 row,inout vec2 bounds){
 }
 // The radial rule is retained; only projected anisotropic supports use the
 // principal-axis rule. At most 432 taps (576 within the narrow 1.05-1.25
-// anisotropy blend), cached along a ray. There is no extra GPU texture.
+// anisotropy blend). Production builds this rule once per finite segment;
+// the legacy point-density cache remains only for compatibility diagnostics.
 void prepareFarColumns(vec3 p,float footprint){
     vec3 column=normalize(p)*(Rg+u_base);
-    if(distance(column,farAnchor)<max(.25,footprint*.5)&&abs(footprint-farFootprint)<max(.01,footprint*.05)&&abs(cloudSlant-farSlant)<cloudSlant*.05)return;
+    #ifdef CLOUD_DIAGNOSTICS
+    bool positionMiss=distance(column,farAnchor)>=max(.25,footprint*.5),footprintMiss=abs(footprint-farFootprint)>=max(.01,footprint*.05),slantMiss=abs(cloudSlant-farSlant)>=cloudSlant*.05;
+    if(!farBuildingResponse&&!positionMiss&&!footprintMiss&&!slantMiss)cloudWork.w+=1.;
+    else{cloudWork.x+=1.;cloudCacheMiss+=vec3(positionMiss?1.:0.,footprintMiss?1.:0.,slantMiss?1.:0.);}
+    #endif
+    if(!farBuildingResponse&&distance(column,farAnchor)<max(.25,footprint*.5)&&abs(footprint-farFootprint)<max(.01,footprint*.05)&&abs(cloudSlant-farSlant)<cloudSlant*.05)return;
     farAnchor=column;farFootprint=footprint;farSlant=cloudSlant;farMoments=vec4(0);farTop=0.;
     // Transport the camera footprint onto the local tangent plane. A world-Z
     // / world-Y frame switch would rotate the filter abruptly near the poles.
@@ -144,6 +253,9 @@ void prepareFarColumns(vec3 p,float footprint){
       int nx=principal?(fine>0.?int(3.*u_columnGrid):medium.x>0.?int(u_columnGrid):4):(radial>0.?int(u_columnGrid):4);
       int ny=principal?(medium.y>0.?int(u_columnGrid):4):nx;
       for(int y=0;y<ny;y++)for(int x=0;x<nx;x++){
+        #ifdef CLOUD_DIAGNOSTICS
+        cloudWork.y+=1.;
+        #endif
         float weight;vec3 offset;
         if(principal){
             float across=columnStrip((float(y)+.5)/float(ny),vec2(a.y,b.y));
@@ -162,12 +274,20 @@ void prepareFarColumns(vec3 p,float footprint){
         vec3 q=advect(samplePoint);
         float cell=cellular(q+cloudWarp(q)+u_seed*.43,29.713,.04).r;
         float threshold=mix(.76,.38,weather.x),cluster=smoothstep(threshold-.035,threshold+.085,cell);
-        float scale=u_density*u_thickness/3.8*cloudSlant*cluster*smoothstep(0.,.2,weather.x);
-        vec4 m=materialOptics((1.-weather.x)*.22+(1.-cluster)*.3,weather.y,scale);
-        farMoments+=vec4(m.r,m.g,m.b*m.r,m.a)*weight;
+        if(cluster>0.){
+        float scale=u_density*u_thickness/3.8*cloudSlant*cluster*smoothstep(0.,.2,weather.x)*farCommonFraction;
+        if(farBuildingResponse){
+          accumulateColumnResponse((1.-weather.x)*.22+(1.-cluster)*.3,weather.y,
+            u_density*u_thickness/3.8*cluster*smoothstep(0.,.2,weather.x)*(farCommonMode?cloudSlant:1.),weight);
+        }else{
+          vec4 m=materialOptics((1.-weather.x)*.22+(1.-cluster)*.3,weather.y,scale);
+          farMoments+=vec4(m.r,m.g,m.b*m.r,m.a)*weight;
+        }
+        }
       }
       if(anisotropic<=0.)break;
     }
+    if(farBuildingResponse)return;
     farMoments.b/=max(.0001,farMoments.r);
     // Fit a positive conditional optical-depth distribution to BOTH E[tau]
     // and E[T]. Exponentiating only the conditional mean over-darkens the
@@ -180,6 +300,28 @@ void prepareFarColumns(vec3 p,float footprint){
         if(k*log(1.+mean/k)<target)lo=k;else hi=k;
     }
     farShape=sqrt(lo*hi);
+}
+void prepareFarResponse(vec3 origin,vec3 direction,vec2 path,float footprint,int count,vec3 sun,vec3 moon,bool moonActive){
+    farPathOrigin=origin;farPathDirection=direction;farPath=path;
+    farResponseCount=min(FAR_RESPONSE_LIMIT,max(1,count));farPathCurve=1.-smoothstep(10.,250.,path.x);
+    farSunDirection=sun;farMoonDirection=moon;
+    vec3 anchor=origin+direction*((path.x+path.y)*.5);
+    farSunActive=true;farMoonActive=moonActive;
+    for(int i=0;i<=FAR_RESPONSE_LIMIT;i++){farResponse[i]=vec4(0);if(i<FAR_RESPONSE_LIMIT){farSunResponse[i]=vec3(0);farMoonResponse[i]=vec3(0);}}
+    cloudSlant=1./max(.04,abs(dot(direction,normalize(anchor))));cloudRay=direction;
+    farBuildingResponse=true;prepareFarColumns(anchor,footprint);farBuildingResponse=false;
+    vec4 end=farResponse[farResponseCount];farMoments=vec4(end.r,end.a,end.g/max(.0001,end.r),end.b);
+}
+// Frozen common-profile diagnostic uses precisely the same spatial rule/table
+// as production. Finite-path production above instead applies each child's top.
+vec4 farCommonResponse(vec3 column,float footprint,float fraction){
+    farCommonFraction=clamp(fraction,0.,1.);farCommonMode=true;farResponseCount=1;
+    farPathOrigin=column;farPathDirection=normalize(column);farPath=vec2(0,1);farPathCurve=0.;
+    farSunActive=false;farMoonActive=false;farResponse[0]=vec4(0);farResponse[1]=vec4(0);
+    farSunResponse[0]=vec3(0);farMoonResponse[0]=vec3(0);
+    farBuildingResponse=true;prepareFarColumns(column,footprint);farBuildingResponse=false;farCommonMode=false;
+    vec4 q=farResponse[1];farMoments=vec4(q.r,q.a,q.g/max(.0001,q.r),q.b);
+    farCommonFraction=1.;farAnchor=vec3(1e8);return farMoments;
 }
 float farCloudDensity(vec3 p,float footprint){
     if(u_coverage<=0.||u_density<=0.)return 0.;

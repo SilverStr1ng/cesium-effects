@@ -11,7 +11,7 @@ try{
   const gpu=cloudProbe(document.querySelector('canvas')!),checks=[];
   const build=(cache:'projected'|'old'|'off')=>{
     let field=density.replace('farAnchor=column;','farEvaluations+=1.;farAnchor=column;');
-    const guard=/if\(distance\(column,farAnchor\)[^\n]+return;/;
+    const guard=/if\(!farBuildingResponse&&distance\(column,farAnchor\)[^\n]+return;/;
     if(cache==='off')field=field.replace(guard,'');
     if(cache==='projected'){
       // Rejected optimization candidate; deliberately kept out of production.

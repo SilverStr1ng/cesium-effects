@@ -150,3 +150,26 @@ vec3 illumination(vec3 p,float rho,float footprint,CloudPhases phases){
     light+=vec3(.0008,.0009,.0012)*moonEnergy*max(0.,moonHeight);
     return light;
 }
+#ifdef LAYERED_CLOUDS
+vec3 farResponseIllumination(vec3 p,int node,CloudPhases phases){
+    float absorbed=max(1e-7,farResponse[node+1].r-farResponse[node].r);
+    float interior=clamp((farResponse[node+1].g-farResponse[node].g)/absorbed,0.,1.);
+    float h=clamp((length(p)-Rg-u_base)/u_thickness,0.,1.),sunHeight=dot(normalize(p),u_sun);
+    float baseShadow=mix(.8,1.,smoothstep(0.,.15,h));
+    vec3 light=vec3(0);
+    if(!planetOccludes(p,u_sun)){
+      vec3 air=u_atmosphere?sunTransmission(u_transmittance,p,u_sun):vec3(1);
+      light+=air*vec3(1.6,1.55,1.47)*dot(phases.sun*vec3(1.,.5,.25),farSunResponse[node])/absorbed*baseShadow;
+    }
+    float moonEnergy=pow(clamp(u_moonFraction,0.,1.),1.6)*u_moonGain*(1.-smoothstep(-.1,.04,sunHeight));
+    if(moonEnergy>.0001&&!planetOccludes(p,u_moon)){
+      vec3 air=u_atmosphere?sunTransmission(u_transmittance,p,u_moon):vec3(1);
+      light+=air*vec3(.12,.14,.18)*moonEnergy*dot(phases.moon*vec3(1.,.5,.25),farMoonResponse[node])/absorbed*baseShadow;
+    }
+    vec3 zenith,horizon;cloudEnvironment(p,zenith,horizon);
+    light+=mix(mix(zenith,horizon,.35),zenith,sqrt(h))*.48*mix(1.,.55,interior);
+    light+=vec3(.015,.017,.019)*max(0.,sunHeight)*(1.-h);
+    light+=vec3(.0008,.0009,.0012)*moonEnergy*max(0.,dot(normalize(p),u_moon));
+    return light;
+}
+#endif

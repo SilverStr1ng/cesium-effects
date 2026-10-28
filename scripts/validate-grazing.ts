@@ -45,7 +45,7 @@ const report={kind:'CPU same-far-model local spatial average; NOT final GPU L/T'
   limits:['Parameter checks isolate quadrature of the existing table. They do not validate the table against changed near voxels.',
     'The material table is baked for detail=.55; far-model detail sensitivity and partial-column correlation remain unvalidated.',
     'No GPU times, screenshots or temporal conclusions are produced by this CPU command.']};
-mkdirSync('artifacts/stage5',{recursive:true});writeFileSync('artifacts/stage5/grazing-matrix.json',JSON.stringify(report,null,2));
+mkdirSync('artifacts/stage6',{recursive:true});writeFileSync('artifacts/stage6/grazing-matrix.json',JSON.stringify(report,null,2));
 console.log(JSON.stringify({cases:rows.length,failures:failures.map(r=>({patch:r.patch,footprint:r.footprint,mu:r.mu,rotation:r.rotation,error:r.opacityError})),
   maxOpacityError:Math.max(...accuracy.map(r=>Math.abs(r.opacityError))),maxInitialReferenceDelta:Math.max(...unconverged.map(r=>Math.abs(r.convergence))),
   maxFinalReferenceDelta:Math.max(...accuracy.map(r=>Math.abs(r.referenceConvergence))),

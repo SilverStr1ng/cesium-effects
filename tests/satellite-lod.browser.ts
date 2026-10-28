@@ -54,6 +54,9 @@ try{
     const candidate=Array.from(actual.slice(patch*4,patch*4+4));
     return {patch,referenceLT:mean,coverage,actualCoverage:statistics[patch*4],coverageError:Math.abs(statistics[patch*4]-coverage),actualLT:candidate,transmissionError:Math.abs(candidate[3]-mean[3]),radianceError:Math.hypot(...candidate.slice(0,3).map((v,c)=>v-mean[c]))};
   });
+  if(new URLSearchParams(location.search).has('quick')){
+    output.textContent=JSON.stringify({scope:'Exploratory medium-only radiance check; full acceptance still required',patches},null,2);
+  }else{
   const convergence=[{grid:64,steps:192},{grid:128,steps:96}].map(config=>{
     const data=gpu.draw(header+main,config.grid*8,config.grid,{...uniforms,u_steps:config.steps,u_grid:config.grid,u_footprint:footprint,u_reference:1},inputs,true).pixels;
     let maxMeanDelta=0;
@@ -104,4 +107,5 @@ try{
     {name:'final filtered field remains continuous at polar frames and longitude seam',pass:fieldContinuity.every(c=>c.maxDelta<.003),fieldContinuity}];
   output.textContent=JSON.stringify({passed:checks.every(c=>c.pass),initializationMs:gpu.initializationMs,reference:{grid,steps:96},checks},null,2);
   document.title=checks.every(c=>c.pass)?'PASS · Satellite LOD':'FAIL · Satellite LOD';
+  }
 }catch(error){output.textContent=String(error);document.title='ERROR · Satellite LOD';}finally{gpu.destroy();}

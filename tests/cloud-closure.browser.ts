@@ -13,6 +13,7 @@ import transport from '../src/effects/global-clouds/shaders/transport.glsl?raw';
 import resolve from '../src/effects/global-clouds/shaders/resolve.glsl?raw';
 import storage from '../src/effects/global-clouds/shaders/storage.glsl?raw';
 import quality from '../src/effects/global-clouds/shaders/quality.glsl?raw';
+import composite from '../src/effects/hillaire-atmosphere/shaders/composite.glsl?raw';
 
 const output=document.querySelector('#result')!,gpu=gpuProbe(document.querySelector('canvas')!);
 try{
@@ -65,6 +66,18 @@ try{
   const linearResolve='#define CLOUD_HDR\n'+common+storage+`
     vec4 czm_viewport=vec4(0,0,1,1);vec4 czm_windowToEyeCoordinates(vec2 uv,float depth){return vec4(0,0,1,1);}
     vec3 cloudBackground(vec3 c){return c;}vec3 cloudDisplay(vec3 L){return L;}`+resolve;
+  // Only the terminal input seam is linear: the actual Hillaire composite and
+  // cloud resolve run unchanged. This isolates transport from Cesium's LDR
+  // surface input, whose clipped highlights cannot represent a linear basis.
+  const productionBackground='#define SKY_HDR\n'+common+skyParameters+atmosphere+`
+    uniform vec3 u_ray;uniform float u_maximum;
+    mat4 czm_inverseProjection=mat4(1),czm_inverseView;vec4 czm_viewport=vec4(0,0,1,1);
+    vec4 czm_windowToEyeCoordinates(vec2 pixel,float z){vec3 wc=normalize(u_ray/vec3(1,1,1.00336409));return vec4(0,0,u_maximum/(.001*length(wc*vec3(1,1,1.00336409))),1);}
+    vec3 recoverRadiance(vec3 boundary,float exposure){return boundary;}
+    #define main atmosphereCompositeMain
+    `+composite+`
+    #undef main
+    void main(){vec3 wc=normalize(u_ray/vec3(1,1,1.00336409));czm_inverseView=mat4(vec4(1,0,0,0),vec4(0,1,0,0),vec4(wc,0),vec4(0,0,0,1));atmosphereCompositeMain();}`;
   const norm=(v:number[])=>v.map(x=>x/Math.hypot(...v));
   const cases=[
     {name:'zero cloud',camera:[0,0,6378.937],ray:norm([1,0,.2]),tau:0,high:0,maximum:1000,sun:norm([1,0,.5])},
@@ -74,20 +87,47 @@ try{
     {name:'grazing finite shell',camera:[-300,0,6380.137],ray:[1,0,0],tau:.025,high:.015,maximum:600,sun:norm([1,0,.2])},
     {name:'sunset long path',camera:[0,0,6378.937],ray:norm([1,0,.02]),tau:.04,high:.02,maximum:1000,sun:norm([1,0,-.01])},
   ];
-  const checks=[];
+  const checks=[],backgroundChecks=[],qualityChecks=[];
   for(const c of cases){
     const uniforms={...medium,u_atmosphere:true,u_hasSkyIrradiance:true,u_base:1.5,u_thickness:3.8,u_highBase:9,u_highThickness:1.5,u_coverage:c.tau>0?1:0,u_density:1,u_highCoverage:c.high>0?1:0,
       u_highOpticalDepth:c.high,u_tau:c.tau,u_camera:c.camera,u_ray:c.ray,u_sun:c.sun,u_moon:[0,0,-1],u_moonFraction:0,u_moonGain:0,u_pixelAngle:0,u_debugView:0,u_maximum:c.maximum,u_boundary:[8,7,6],u_cloudSteps:64,u_lightSteps:5,u_cloudSubsteps:3,u_cloudIntervals:4,u_cloudRepresentations:2};
     const ref=(steps:number,mode:number)=>gpu.draw(constantQuality+reference,1,1,{...uniforms,u_steps:steps,u_output:mode},inputs,true);
     const low=ref(4096,0),high=ref(8192,0),background=ref(8192,2),referenceT=ref(8192,1),clearT=ref(8192,3);
-    const cloud=gpu.draw('#define LIGHT_STEPS 5\n#define CLOUD_SUBSTEPS 3\n'+quality+production,1,1,uniforms,inputs,true),staticCloud=gpu.draw(constantQuality+production,1,1,uniforms,inputs,true);
+    const cloud=gpu.draw(quality+production,1,1,uniforms,inputs,true),staticCloud=gpu.draw(constantQuality+production,1,1,uniforms,inputs,true);
     const actual=gpu.draw(linearResolve,1,1,{u_hasSkyRadiance:true,u_skyRadianceHdr:true,u_emptySceneDepth:true},{u_clouds:cloud.texture,u_skyRadiance:background.texture,colorTexture:background.texture,depthTexture:background.texture},true);
     const maxL=Math.max(...Array.from(actual.pixels.slice(0,3)).map((v,i)=>Math.abs(v-high.pixels[i]))),cloudT=1-cloud.pixels[3];
     const convergence=Math.max(...Array.from(low.pixels).map((v,i)=>Math.abs(v-high.pixels[i]))),Terror=Math.abs(cloudT-high.pixels[3]);
     const qualityError=Math.max(...Array.from(cloud.pixels).map((v,i)=>Math.abs(v-staticCloud.pixels[i])));
-    const actualRgbT=Array.from(clearT.pixels.slice(0,3)).map(v=>v*cloudT),rgbTError=Math.max(...actualRgbT.map((v,i)=>Math.abs(v-referenceT.pixels[i])));
-    checks.push({name:c.name,pass:maxL<=.002&&Terror<=.002&&rgbTError<=.002&&convergence<=.0002&&qualityError<=.00001,linearRadiance:Array.from(actual.pixels.slice(0,3)),reference:Array.from(high.pixels),actualRgbT,referenceRgbT:Array.from(referenceT.pixels.slice(0,3)),cloudT,maxRadianceError:maxL,cloudTransmissionError:Terror,maxRgbTransmissionError:rgbTError,referenceConvergence:convergence,staticDynamicQualityError:qualityError,conditions:c});
+    // The six legacy controlled cases use a reference-generated clear backdrop.
+    // This factorization check is NOT a measurement of production RGB T. Only
+    // the independent terminal-basis images below measure that quantity.
+    const referenceAirTimesMeasuredCloudT=Array.from(clearT.pixels.slice(0,3)).map(v=>v*cloudT),factorizationError=Math.max(...referenceAirTimesMeasuredCloudT.map((v,i)=>Math.abs(v-referenceT.pixels[i])));
+    checks.push({name:c.name,pass:maxL<=.002&&Terror<=.002&&factorizationError<=.002&&convergence<=.0002&&qualityError<=.00001,linearRadiance:Array.from(actual.pixels.slice(0,3)),reference:Array.from(high.pixels),referenceAirTimesMeasuredCloudT,referenceRgbT:Array.from(referenceT.pixels.slice(0,3)),cloudT,maxRadianceError:maxL,cloudTransmissionError:Terror,factorizationError,referenceConvergence:convergence,staticDynamicQualityError:qualityError,conditions:c});
+    if(backgroundChecks.length<4){
+      const basis=[];
+      for(const boundary of [[0,0,0],[1,1,1],[1,0,0],[0,1,0],[0,0,1]]){
+        const terminal=gpu.draw('uniform vec3 u_boundary;void main(){out_FragColor=vec4(u_boundary,1);}',1,1,{u_boundary:boundary},{},true);
+        const depth=gpu.draw('void main(){out_FragColor=vec4(.5);}',1,1,{},{}).texture;
+        const backdrop=gpu.draw(productionBackground,1,1,{...uniforms,u_emptySceneDepth:false,u_exposure:8},{...inputs,colorTexture:terminal.texture,depthTexture:depth,u_skyView:sky,u_moonAlbedo:sky},true);
+        const resolved=gpu.draw(linearResolve,1,1,{u_hasSkyRadiance:true,u_skyRadianceHdr:true,u_emptySceneDepth:true},{u_clouds:cloud.texture,u_skyRadiance:backdrop.texture,colorTexture:backdrop.texture,depthTexture:depth},true);
+        basis.push(Array.from(resolved.pixels.slice(0,3)));
+      }
+      const L=basis[0],T=basis[1].map((v,i)=>v-L[i]);
+      const referenceL=Array.from(gpu.draw(constantQuality+reference,1,1,{...uniforms,u_boundary:[0,0,0],u_steps:8192,u_output:0},inputs,true).pixels.slice(0,3));
+      const referenceRgbT=Array.from(referenceT.pixels.slice(0,3));
+      const maxLError=Math.max(...L.map((v,i)=>Math.abs(v-referenceL[i]))),maxTError=Math.max(...T.map((v,i)=>Math.abs(v-referenceRgbT[i])));
+      const maxBasisResidual=Math.max(...basis.slice(2).flatMap((v,channel)=>v.map((x,i)=>Math.abs(x-L[i]-(i===channel?T[i]:0)))));
+      backgroundChecks.push({name:c.name,pass:maxLError<=.002&&maxTError<=.002&&maxBasisResidual<=.00001,L,T,referenceL,referenceRgbT,maxLError,maxTError,maxBasisResidual,basis});
+    }
+    if(c.name==='inside partial column')for(const [name,steps,lights,substeps] of [['low',40,3,2],['medium',64,5,3],['high',96,7,4]] as const){
+      const u={...uniforms,u_cloudSteps:steps,u_lightSteps:lights,u_cloudSubsteps:substeps};
+      const dynamic=gpu.draw(quality+production,1,1,u,inputs,true).pixels;
+      const fixed=gpu.draw(`#define CLOUD_STEPS ${steps}\n#define LIGHT_STEPS ${lights}\n#define CLOUD_SUBSTEPS ${substeps}\n`+production,1,1,u,inputs,true).pixels;
+      const maxError=Math.max(...Array.from(dynamic).map((v,i)=>Math.abs(v-fixed[i])));
+      qualityChecks.push({name,maxError,dynamic:Array.from(dynamic),fixed:Array.from(fixed),pass:maxError<=.00001});
+    }
   }
-  gpu.destroy();output.textContent=JSON.stringify({passed:checks.every(c=>c.pass),checks,reference:'4096/8192 midpoint full-ray integral; same source laws and real Hillaire LUTs, independent transport. Controlled finite spherical cloud profiles isolate composition.'},null,2);
-  document.title=checks.every(c=>c.pass)?'PASS · Cloud closure':'FAIL · Cloud closure';
+  const passed=[...checks,...backgroundChecks,...qualityChecks].every(c=>c.pass);
+  gpu.destroy();output.textContent=JSON.stringify({passed,checks,backgroundChecks,qualityChecks,reference:'4096/8192 midpoint full-ray integral; same source laws and real Hillaire LUTs, independent transport. Six controlled profiles preserved. Additional actual Hillaire composite/resolve L and RGB T are measured through five terminal basis images, without reference clearT. The terminal injection is linear; Cesium LDR highlight recovery and procedural weather variation are outside this controlled test.'},null,2);
+  document.title=passed?'PASS · Cloud closure':'FAIL · Cloud closure';
 }catch(e){output.textContent=String(e);document.title='ERROR · Cloud closure';}

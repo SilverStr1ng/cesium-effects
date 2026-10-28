@@ -32,7 +32,7 @@ try{
       transmittance:()=>undefined,atmosphereEnabled:()=>true,backgroundStage:radiance.name,backgroundIsHdr:()=>hdr},
       {id:'pipeline-clouds',density:'uniform float u_base,u_thickness;float cloudDensity(vec3 p,float f,bool coarse){return 0.;}',
         lighting:'CloudPhases scatteringPhases(vec3 d){return CloudPhases(vec3(0),vec3(0));}vec3 illumination(vec3 p,float rho,float f,CloudPhases phases){return vec3(0);}'});
-    clouds.mount({viewer,onStatus:()=>{}});clouds.setPaused(true);clouds.setHdrEnabled(hdr);
+    clouds.mount({viewer,onStatus:()=>{}});clouds.setPaused(true);clouds.setHdrEnabled(hdr);await clouds.ready;
     for(const quality of ['low','medium','high','medium'] as const){
       clouds.setQuality(quality);await frames();const actual=await pixels();
       let maximumByteError=0;for(let i=0;i<actual.length;i++)maximumByteError=Math.max(maximumByteError,Math.abs(actual[i]-reference[i]));

@@ -1,7 +1,7 @@
 import {createWeather,WEATHER_WIDTH as W,WEATHER_HEIGHT as H} from '../src/effects/global-clouds/WeatherField';
 import {createCumulusNoise} from '../src/effects/global-clouds/CumulusNoise';
 import {createVoxelCloudField,sampleVolume} from '../src/effects/global-clouds/VoxelCloudField';
-import {createCloudOptics} from '../src/effects/global-clouds/CloudOptics';
+import {createCloudOpticsData} from '../src/effects/global-clouds/CloudOptics';
 
 export type V3=[number,number,number];
 export const add=(a:V3,b:V3):V3=>a.map((v,i)=>v+b[i]) as V3;
@@ -13,11 +13,11 @@ export const smooth=(a:number,b:number,x:number)=>{const t=Math.max(0,Math.min(1
 const mix=(a:number,b:number,t:number)=>a+(b-a)*t;
 const clamp=(v:number)=>Math.max(0,Math.min(1,v));
 let assets:ReturnType<typeof generate>|undefined;
-function generate(){const noise=createCumulusNoise(),voxels=createVoxelCloudField();return {noise:noise.bytes,weather:createWeather(13),optics:createCloudOptics(voxels.bytes,noise.bytes)};}
+function generate(){const noise=createCumulusNoise(),voxels=createVoxelCloudField();return {noise:noise.bytes,weather:createWeather(13),...createCloudOpticsData(voxels.bytes,noise.bytes)};}
 /** Independent double-precision mirror of the same far-model point samples.
  * This measures spatial quadrature, not a full near-volume or ray reference. */
 export function farField(){
-  const {noise,weather,optics}=assets??=generate();
+  const {noise,weather,optics,components:componentBytes}=assets??=generate();
   const volume=(data:Uint8Array,size:number,p:V3,c:number)=>sampleVolume(data,size,...p,c);
   const noiseAt=(p:V3,scale:number,c:number)=>volume(noise,64,p.map(v=>v/scale*64-.5) as V3,c);
   const weatherAt=(p:V3,c:number)=>{
@@ -26,7 +26,7 @@ export function farField(){
     const at=(xx:number,yy:number)=>weather[(((xx%W+W)%W)+W*Math.max(0,Math.min(H-1,yy)))*4+c]/255;
     return mix(mix(at(a,b),at(a+1,b),fx),mix(at(a,b+1),at(a+1,b+1),fx),fy);
   };
-  function point(p:V3,slant:number,density=1.1,thickness=3.8){
+  function point(p:V3,slant:number,density=1.1,thickness=3.8,fraction=1,components=false){
     let cover=clamp((weatherAt(p,0)+.62-1)/.62);
     const type=mix(.45,1,smooth(.25,.75,weatherAt(p,1))),top=mix(mix(.26,.58,smooth(0,.5,type)),1,smooth(.5,1,type));
     if(cover<=0)return [0,0,0,0,top];
@@ -34,10 +34,16 @@ export function farField(){
     if(cover<=0)return [0,0,0,0,top];
     const q=p.map((v,i)=>v+(noiseAt(p,71.3,[0,1,3][i])-.5)*3.4+13*.43) as V3;
     const cell=noiseAt(q,29.713,0),threshold=mix(.76,.38,cover),cluster=smooth(threshold-.035,threshold+.085,cell);
-    const scale=density*thickness/3.8*slant*cluster*smooth(0,.2,cover);
+    const scale=density*thickness/3.8*slant*cluster*smooth(0,.2,cover)*fraction;
     const uv:V3=[clamp(((1-cover)*.22+(1-cluster)*.3)/.52)*31,type*31,clamp((Math.log2(Math.max(.03125,scale))+5)/12)*31];
     const raw=[0,1,2,3].map(c=>volume(optics,32,uv,c)),thin=Math.min(1,scale/.03125);
-    const opacity=raw[0]*thin;
+    let opacity=raw[0]*thin;
+    if(components){
+      const x=uv[0],y=uv[1],a=Math.floor(x),b=Math.floor(y),fx=x-a,fy=y-b;
+      const sample=(k:number,c:number)=>{const at=(i:number,j:number)=>componentBytes[(Math.min(31,i)+32*(Math.min(31,j)+32*k))*4+c]/255;
+        return mix(mix(at(a,b),at(a+1,b),fx),mix(at(a,b+1),at(a+1,b+1),fx),fy);};
+      opacity=0;for(let k=0;k<8;k++){const tau=Math.expm1((sample(k,0)*65280+sample(k,1)*255)/65535*Math.log(65));opacity+=sample(k,2)*255/256*-Math.expm1(-tau*scale);}
+    }
     return [opacity,raw[1]/Math.max(1/255,1-raw[1])*scale,raw[2]*thin*opacity,raw[3]*thin,top];
   }
   return {point};
@@ -52,18 +58,18 @@ export function patchFrame(patch:number,mu:number,rotation=0){
   const a=add(mul(east,slant*Math.cos(rotation)),mul(north,Math.sin(rotation))),b=add(mul(east,-slant*Math.sin(rotation)),mul(north,Math.cos(rotation)));
   return {n,east,north,d,right,up,a,b,slant,column:mul(n,6378.137+1.5)};
 }
-export function spatialMean(patch:number,footprint:number,mu:number,nx:number,ny=nx,rotation=0,density=1.1,thickness=3.8){
+export function spatialMean(patch:number,footprint:number,mu:number,nx:number,ny=nx,rotation=0,density=1.1,thickness=3.8,fraction=1,components=false){
   const {a,b,slant,column}=patchFrame(patch,mu,rotation),field=farField(),sum=[0,0,0,0,0];
   for(let y=0;y<ny;y++)for(let x=0;x<nx;x++){
     const p=mul(norm(add(column,mul(add(mul(a,(x+.5)/nx-.5),mul(b,(y+.5)/ny-.5)),footprint))),6378.137+1.5);
-    field.point(p,slant,density,thickness).forEach((v,c)=>sum[c]+=v/(nx*ny));
+    field.point(p,slant,density,thickness,fraction,components).forEach((v,c)=>sum[c]+=v/(nx*ny));
   }
   return sum;
 }
 
 /** CPU quadrature mirror. The GPU fixture checks the actual production GLSL;
  * the 192/384 grid above remains independent of this principal-axis rule. */
-export function filteredMean(patch:number,footprint:number,mu:number,rotation=0,density=1.1,thickness=3.8){
+export function filteredMean(patch:number,footprint:number,mu:number,rotation=0,density=1.1,thickness=3.8,fraction=1,components=false){
   const {east,north,slant,column}=patchFrame(patch,mu),field=farField();
   const c=Math.cos(rotation),s=Math.sin(rotation),a=[slant*c,s],b=[-slant*s,c];
   const support=[footprint*(Math.abs(a[0])+Math.abs(b[0])),footprint*(Math.abs(a[1])+Math.abs(b[1]))];
@@ -80,13 +86,13 @@ export function filteredMean(patch:number,footprint:number,mu:number,rotation=0,
     for(let x=0;x<nx;x++){
       const along=lo+(hi-lo)*(x+.5)/nx,p=mul(norm(add(column,mul(add(mul(east,along),mul(north,across)),footprint))),6379.637);
       const w=weight(x,nx,medium[0],fine)*weight(y,ny,medium[1],0);
-      field.point(p,slant,density,thickness).forEach((v,i)=>sum[i]+=v*w);
+      field.point(p,slant,density,thickness,fraction,components).forEach((v,i)=>sum[i]+=v*w);
     }
   }
   const anisotropic=smooth(1.05,1.25,slant);
   if(anisotropic<1){
-    const f=smooth(4,12,footprint),coarse=spatialMean(patch,footprint,mu,4,4,rotation,density,thickness);
-    const detailed=f>0?spatialMean(patch,footprint,mu,12,12,rotation,density,thickness):coarse;
+    const f=smooth(4,12,footprint),coarse=spatialMean(patch,footprint,mu,4,4,rotation,density,thickness,fraction,components);
+    const detailed=f>0?spatialMean(patch,footprint,mu,12,12,rotation,density,thickness,fraction,components):coarse;
     sum.forEach((v,i)=>sum[i]=mix(mix(coarse[i],detailed[i],f),v,anisotropic));
   }
   return {moments:sum,taps:nx*ny+(anisotropic>0&&anisotropic<1?(footprint>4?144:16):0),support};

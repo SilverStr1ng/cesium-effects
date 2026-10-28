@@ -31,9 +31,14 @@ CloudSegment integrateCloudMedium(vec3 d,vec2 segment){
     int steps=CLOUD_STEPS;
     #ifdef LAYERED_CLOUDS
     if(cloudLayer==1)steps=max(8,int(mix(float(CLOUD_STEPS)*.25,float(CLOUD_STEPS)*.75,smoothstep(20.,120.,span))));
-    // Statistical columns have a smooth cubic profile, so fine voxel quadrature
-    // wastes work. Long limb intervals still sample the changing weather field.
-    if(cloudLayer==0&&cloudRepresentation==2)steps=min(CLOUD_STEPS,max(16,int(ceil(span/max(.5,(segment.x+segment.y)*.5*u_pixelAngle*.5)))));
+    // One correlated local distribution per finite interval. Child tops and
+    // spherical path lengths vary; weather is frozen at the footprint anchor.
+    // Long oblique paths through changing weather remain a model limitation.
+    bool statistical=cloudLayer==0&&cloudRepresentation==2;
+    if(statistical){
+        steps=min(FAR_RESPONSE_LIMIT,min(CLOUD_STEPS,max(16,int(ceil(span/max(.5,(segment.x+segment.y)*.5*u_pixelAngle*.5))))));
+        prepareFarResponse(u_camera,d,segment,max(.002,(segment.x+segment.y)*.5*u_pixelAngle),steps,u_sun,u_moon,pow(clamp(u_moonFraction,0.,1.),1.6)*u_moonGain>.0001);
+    }
     #endif
     // Quadratic distribution preserves nearby detail on long horizon rays.
     float curve=1.-smoothstep(10.,250.,segment.x);
@@ -67,7 +72,7 @@ CloudSegment integrateCloudMedium(vec3 d,vec2 segment){
             float count=clamp(ceil((t1-t0)/max(.045,footprint)),1.,float(CLOUD_SUBSTEPS));
             if(skipDensity)count=1.;
             #ifdef LAYERED_CLOUDS
-            if(cloudLayer==1)count=1.;
+            if(cloudLayer==1||statistical)count=1.;
             #endif
             float ds=(t1-t0)/count;
             for(int s=0;s<CLOUD_SUBSTEPS;s++){
@@ -88,7 +93,7 @@ CloudSegment integrateCloudMedium(vec3 d,vec2 segment){
                 }
                 // The shallow ice medium is smooth and prefiltered; midpoint
                 // quadrature avoids projecting screen-space jitter into wisps.
-                if(cloudLayer==1)offset=.5;
+                if(cloudLayer==1||statistical)offset=.5;
                 #endif
                 float t=t0+(float(s)+.05+offset*.9)*ds;
                 vec3 p=u_camera+d*t;
@@ -99,9 +104,32 @@ CloudSegment integrateCloudMedium(vec3 d,vec2 segment){
                     if(u_debugView==3.){debugWeather+=cloudWeather(p,footprint).x*ds;debugWeatherLength+=ds;}
                 }
                 #endif
-                float rho=skipDensity?0.:cloudDensity(p,footprint,false);
+                float rho=0.;
+                #ifdef LAYERED_CLOUDS
+                if(statistical){
+                    // Conditional increments telescope to Q(end)/Q(start).
+                    // Never multiply independently averaged small-segment T.
+                    float before=max(1e-7,1.-farResponse[i].r),after=max(1e-7,1.-farResponse[i+1].r);
+                    rho=max(0.,-log(after/before))/ds;
+                }else
+                #endif
+                if(!skipDensity){
+                    #ifdef LAYERED_CLOUDS
+                    // The statistical branch was completed above. Keeping its
+                    // footprint builder out of this call graph prevents ANGLE
+                    // from inlining it again inside every height/substep body.
+                    rho=cloudLayer==0?lowCloudDensity(p,footprint,false):highCloudDensity(p,footprint);
+                    #else
+                    rho=cloudDensity(p,footprint,false);
+                    #endif
+                }
                 vec3 source=vec3(0),airSource=vec3(0),airExtinction=vec3(0);
-                if(rho>1e-7)source=cloudSource(illumination(p,rho,footprint,phases));
+                if(rho>1e-7){
+                    #ifdef LAYERED_CLOUDS
+                    if(statistical)source=cloudSource(farResponseIllumination(p,i,phases));else
+                    #endif
+                    source=cloudSource(illumination(p,rho,footprint,phases));
+                }
                 if(u_atmosphere)atmosphereSource(p,d,u_sun,airSource,airExtinction);
                 cloudTransportStep(result,airSource,airExtinction,rho,source,ds);
                 processedEnd=t0+float(s+1)*ds;
@@ -136,6 +164,9 @@ CloudSegment integrateCloud(vec3 d,vec2 segment){
         #define CLOUD_REPRESENTATION_COUNT 2
         #endif
         for(int mode=blend>=1.?2:1;mode<=CLOUD_REPRESENTATION_COUNT;mode++){
+            #ifdef CLOUD_DIAGNOSTICS
+            cloudBranchWork[mode-1]+=1.;
+            #endif
             cloudRepresentation=mode;farAnchor=vec3(1e8);
             CloudSegment part=integrateCloudMedium(d,segment);
             if(mode==1)nearCloud=part;else farCloud=part;
@@ -184,6 +215,11 @@ void main(){
         if(inner.y<=outer.x||inner.x>=outer.y)integrateCloudInterval(d,outer,acc,airL,airT,cursor);
         else{integrateCloudInterval(d,vec2(outer.x,min(outer.y,inner.x)),acc,airL,airT,cursor);if(acc.a<.995)integrateCloudInterval(d,vec2(max(outer.x,inner.y),outer.y),acc,airL,airT,cursor);}
     }
+    #endif
+    #ifdef CLOUD_DIAGNOSTICS
+    if(u_debugView==8.){out_FragColor=cloudWork;return;}
+    if(u_debugView==9.){out_FragColor=vec4(cloudCacheMiss,0);return;}
+    if(u_debugView==10.){out_FragColor=vec4(cloudBranchWork,0,0);return;}
     #endif
     if(u_debugView>0.){
         float value=0.;vec3 color=vec3(0);

@@ -98,10 +98,15 @@ try{
   const instrumented=lighting.replace('CloudPhases scatteringPhases(vec3 d){','CloudPhases scatteringPhases(vec3 d){phaseCalls+=1.;');
   const marchStub=`uniform sampler2D depthTexture;uniform float u_pixelAngle,u_highBase,u_highThickness,u_highCoverage,u_highType,u_highAnisotropy,u_highAlbedo,u_highMultiple,u_coverage,u_density,u_highOpticalDepth;
     uniform bool u_voxelReady,u_skipVoxels,u_opticsReady;int cloudLayer=0,cloudRepresentation=0;float cloudSlant=1.,cloudStep=0.,phaseCalls=0.,farShape=64.;vec3 cloudRay,farAnchor,cloudScreenRight,cloudScreenUp;vec4 farMoments=vec4(0);float debugMipA=-1.,debugMipB=-1.;
+    // This call-count seam intentionally has no cloud material. Supply the
+    // finite-response interface too; it must remain unreachable when optics
+    // are unavailable, just like the existing empty density stubs.
+    const int FAR_RESPONSE_LIMIT=8;vec4 farResponse[9];vec3 farSunResponse[8],farMoonResponse[8];
+    void prepareFarResponse(vec3 o,vec3 d,vec2 p,float f,int count,vec3 sun,vec3 moon,bool moonActive){}
+    float lowCloudDensity(vec3 p,float f,bool coarse){return 0.;}float highCloudDensity(vec3 p,float f){return 0.;}
     float layerBase(){return cloudLayer==0?u_base:u_highBase;}float layerThickness(){return cloudLayer==0?u_thickness:u_highThickness;}
     float voxelEmptyDistance(vec3 p,float f){return 0.;}float voxelBodyDepth(vec3 p,float f){return 0.;}
     float farCloudWeight(float f){return 0.;}float farCloudLightDepth(vec3 p,vec3 l,float f){return 0.;}
-    float lowCloudDensity(vec3 p,float f,bool coarse){return 0.;}
     float highPathScale=1.,highLocalTau=0.;float highProfilePath(vec3 p,vec3 d,vec2 path){return 1.;}float highFarWeight(float f){return 1.;}
     vec3 columnOptics(vec2 w,float s){return vec3(0);}vec2 cloudWeather(vec3 p,float f){return vec2(0);}
     vec3 cloudSource(vec3 light){return light;}vec3 storeCloudRadiance(vec3 light){return vec3(phaseCalls,0,0);}`;
