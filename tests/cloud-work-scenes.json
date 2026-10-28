@@ -1,0 +1,527 @@
+[
+  {
+    "name": "global",
+    "utc": "2026-06-21T17:00:00Z",
+    "buffer": [
+      1920,
+      1080
+    ],
+    "camera": {
+      "position": [
+        -2492833.869422986,
+        -18884013.5304159,
+        13541839.779073667
+      ],
+      "direction": [
+        0.10642240853438871,
+        0.8061837683423432,
+        -0.5820154659655351
+      ],
+      "up": [
+        -0.9307035485640135,
+        -0.1252442803560384,
+        -0.3436637527125183
+      ],
+      "fovy": 1.0471975511965976
+    },
+    "clouds": {
+      "quality": "medium",
+      "storage": "RGBA16F",
+      "parameters": {
+        "coverage": 0.62,
+        "density": 1.1,
+        "base": 1.5,
+        "thickness": 3.8,
+        "wind": 24,
+        "detail": 0.55,
+        "seed": 13,
+        "type": 0,
+        "highCoverage": 0.35,
+        "highBase": 9,
+        "highThickness": 1.5,
+        "highWind": 48,
+        "highType": 0,
+        "highOpticalDepth": 0.35,
+        "highAnisotropy": 0.78,
+        "highAlbedo": 0.98,
+        "highMultiple": 0.12
+      },
+      "motion": {
+        "angle": 0,
+        "highAngle": 0,
+        "evolution": 0
+      }
+    },
+    "atmosphere": {
+      "parameters": {
+        "elevation": 66.73643899227147,
+        "azimuth": 114.85512651455099,
+        "rayleigh": 1,
+        "mie": 1,
+        "ozone": 1,
+        "exposure": 8,
+        "sunScale": 3.2,
+        "moonScale": 3,
+        "sunBrightness": 1,
+        "moonBrightness": 2.4,
+        "sunHaloScale": 2.8,
+        "sunHaloBrightness": 1,
+        "moonHaloScale": 3,
+        "moonHaloBrightness": 0
+      },
+      "storage": "RGBA16F"
+    },
+    "visible": true,
+    "focused": true
+  },
+  {
+    "name": "orbit",
+    "utc": "2026-06-21T17:00:00Z",
+    "buffer": [
+      1920,
+      1080
+    ],
+    "camera": {
+      "position": [
+        -808582.7602370604,
+        -6125272.916125795,
+        4375715.399682445
+      ],
+      "direction": [
+        0.10655992082650018,
+        0.8072254679183491,
+        -0.5805445953735614
+      ],
+      "up": [
+        -0.9306221961697362,
+        -0.12462800996067197,
+        -0.3441078132351251
+      ],
+      "fovy": 1.0471975511965976
+    },
+    "clouds": {
+      "quality": "medium",
+      "storage": "RGBA16F",
+      "parameters": {
+        "coverage": 0.62,
+        "density": 1.1,
+        "base": 1.5,
+        "thickness": 3.8,
+        "wind": 24,
+        "detail": 0.55,
+        "seed": 13,
+        "type": 0,
+        "highCoverage": 0.35,
+        "highBase": 9,
+        "highThickness": 1.5,
+        "highWind": 48,
+        "highType": 0,
+        "highOpticalDepth": 0.35,
+        "highAnisotropy": 0.78,
+        "highAlbedo": 0.98,
+        "highMultiple": 0.12
+      },
+      "motion": {
+        "angle": 0,
+        "highAngle": 0,
+        "evolution": 0
+      }
+    },
+    "atmosphere": {
+      "parameters": {
+        "elevation": 66.73643899227147,
+        "azimuth": 114.85512651455099,
+        "rayleigh": 1,
+        "mie": 1,
+        "ozone": 1,
+        "exposure": 8,
+        "sunScale": 3.2,
+        "moonScale": 3,
+        "sunBrightness": 1,
+        "moonBrightness": 2.4,
+        "sunHaloScale": 2.8,
+        "sunHaloBrightness": 1,
+        "moonHaloScale": 3,
+        "moonHaloBrightness": 0
+      },
+      "storage": "RGBA16F"
+    },
+    "visible": true,
+    "focused": true
+  },
+  {
+    "name": "inside",
+    "utc": "2026-06-21T17:00:00Z",
+    "buffer": [
+      1920,
+      1080
+    ],
+    "camera": {
+      "position": [
+        -680986.8809539358,
+        -5158693.337613582,
+        3681306.06046449
+      ],
+      "direction": [
+        -0.9305995795010943,
+        -0.12445668146507195,
+        -0.3442309647185858
+      ],
+      "up": [
+        -0.10659805716582094,
+        -0.8075143628810219,
+        0.5801356806380124
+      ],
+      "fovy": 1.0471975511965976
+    },
+    "clouds": {
+      "quality": "medium",
+      "storage": "RGBA16F",
+      "parameters": {
+        "coverage": 0.62,
+        "density": 1.1,
+        "base": 1.5,
+        "thickness": 3.8,
+        "wind": 24,
+        "detail": 0.55,
+        "seed": 13,
+        "type": 0,
+        "highCoverage": 0.35,
+        "highBase": 9,
+        "highThickness": 1.5,
+        "highWind": 48,
+        "highType": 0,
+        "highOpticalDepth": 0.35,
+        "highAnisotropy": 0.78,
+        "highAlbedo": 0.98,
+        "highMultiple": 0.12
+      },
+      "motion": {
+        "angle": 0,
+        "highAngle": 0,
+        "evolution": 0
+      }
+    },
+    "atmosphere": {
+      "parameters": {
+        "elevation": 66.73643899227147,
+        "azimuth": 114.85512651455099,
+        "rayleigh": 1,
+        "mie": 1,
+        "ozone": 1,
+        "exposure": 8,
+        "sunScale": 3.2,
+        "moonScale": 3,
+        "sunBrightness": 1,
+        "moonBrightness": 2.4,
+        "sunHaloScale": 2.8,
+        "sunHaloBrightness": 1,
+        "moonHaloScale": 3,
+        "moonHaloBrightness": 0
+      },
+      "storage": "RGBA16F"
+    },
+    "visible": true,
+    "focused": true
+  },
+  {
+    "name": "ground",
+    "utc": "2026-06-21T17:00:00Z",
+    "buffer": [
+      1920,
+      1080
+    ],
+    "camera": {
+      "position": [
+        -680750.233013278,
+        -5156900.653805751,
+        3680018.16197574
+      ],
+      "direction": [
+        -0.9324266969426693,
+        -0.28962844385869796,
+        -0.21609215473166188
+      ],
+      "up": [
+        0.08921380564768987,
+        -0.7639929385612744,
+        0.6390271408245233
+      ],
+      "fovy": 1.0471975511965976
+    },
+    "clouds": {
+      "quality": "medium",
+      "storage": "RGBA16F",
+      "parameters": {
+        "coverage": 0.62,
+        "density": 1.1,
+        "base": 1.5,
+        "thickness": 3.8,
+        "wind": 24,
+        "detail": 0.55,
+        "seed": 13,
+        "type": 0,
+        "highCoverage": 0.35,
+        "highBase": 9,
+        "highThickness": 1.5,
+        "highWind": 48,
+        "highType": 0,
+        "highOpticalDepth": 0.35,
+        "highAnisotropy": 0.78,
+        "highAlbedo": 0.98,
+        "highMultiple": 0.12
+      },
+      "motion": {
+        "angle": 0,
+        "highAngle": 0,
+        "evolution": 0
+      }
+    },
+    "atmosphere": {
+      "parameters": {
+        "elevation": 66.73643899227147,
+        "azimuth": 114.85512651455099,
+        "rayleigh": 1,
+        "mie": 1,
+        "ozone": 1,
+        "exposure": 8,
+        "sunScale": 3.2,
+        "moonScale": 3,
+        "sunBrightness": 1,
+        "moonBrightness": 2.4,
+        "sunHaloScale": 2.8,
+        "sunHaloBrightness": 1,
+        "moonHaloScale": 3,
+        "moonHaloBrightness": 0
+      },
+      "storage": "RGBA16F"
+    },
+    "visible": true,
+    "focused": true
+  },
+  {
+    "name": "night",
+    "utc": "2026-10-26T04:12:00Z",
+    "buffer": [
+      1920,
+      1080
+    ],
+    "camera": {
+      "position": [
+        2215311.488147542,
+        -5696550.921074932,
+        1819404.675533115
+      ],
+      "direction": [
+        -0.7110303808889036,
+        -0.617525539646755,
+        -0.336300468832508
+      ],
+      "up": [
+        0.5060801469385214,
+        -0.7814648277580822,
+        0.3649597345622057
+      ],
+      "fovy": 1.0471975511965976
+    },
+    "clouds": {
+      "quality": "medium",
+      "storage": "RGBA16F",
+      "parameters": {
+        "coverage": 0.62,
+        "density": 1.1,
+        "base": 1.5,
+        "thickness": 3.8,
+        "wind": 24,
+        "detail": 0.55,
+        "seed": 13,
+        "type": 0,
+        "highCoverage": 0.35,
+        "highBase": 9,
+        "highThickness": 1.5,
+        "highWind": 48,
+        "highType": 0,
+        "highOpticalDepth": 0.35,
+        "highAnisotropy": 0.78,
+        "highAlbedo": 0.98,
+        "highMultiple": 0.12
+      },
+      "motion": {
+        "angle": 0,
+        "highAngle": 0,
+        "evolution": 0
+      }
+    },
+    "atmosphere": {
+      "parameters": {
+        "elevation": -54.10273373208329,
+        "azimuth": 302.22615911917745,
+        "rayleigh": 1,
+        "mie": 1,
+        "ozone": 1,
+        "exposure": 8,
+        "sunScale": 3.2,
+        "moonScale": 3,
+        "sunBrightness": 1,
+        "moonBrightness": 2.4,
+        "sunHaloScale": 2.8,
+        "sunHaloBrightness": 1,
+        "moonHaloScale": 3,
+        "moonHaloBrightness": 0
+      },
+      "storage": "RGBA16F"
+    },
+    "visible": true,
+    "focused": true
+  },
+  {
+    "name": "high-only",
+    "utc": "2026-06-21T17:00:00Z",
+    "buffer": [
+      1920,
+      1080
+    ],
+    "camera": {
+      "position": [
+        -681411.1416763762,
+        -5161907.248224017,
+        3683614.9955929695
+      ],
+      "direction": [
+        -0.9305996687847996,
+        -0.12445735781768656,
+        -0.3442304788113072
+      ],
+      "up": [
+        -0.10659790669483307,
+        -0.8075132230152128,
+        0.5801372949085957
+      ],
+      "fovy": 1.0471975511965976
+    },
+    "clouds": {
+      "quality": "medium",
+      "storage": "RGBA16F",
+      "parameters": {
+        "coverage": 0,
+        "density": 1.1,
+        "base": 1.5,
+        "thickness": 3.8,
+        "wind": 24,
+        "detail": 0.55,
+        "seed": 13,
+        "type": 0,
+        "highCoverage": 0.35,
+        "highBase": 9,
+        "highThickness": 1.5,
+        "highWind": 48,
+        "highType": 0,
+        "highOpticalDepth": 0.35,
+        "highAnisotropy": 0.78,
+        "highAlbedo": 0.98,
+        "highMultiple": 0.12
+      },
+      "motion": {
+        "angle": 0,
+        "highAngle": 0,
+        "evolution": 0
+      }
+    },
+    "atmosphere": {
+      "parameters": {
+        "elevation": 66.73643899227147,
+        "azimuth": 114.85512651455099,
+        "rayleigh": 1,
+        "mie": 1,
+        "ozone": 1,
+        "exposure": 8,
+        "sunScale": 3.2,
+        "moonScale": 3,
+        "sunBrightness": 1,
+        "moonBrightness": 2.4,
+        "sunHaloScale": 2.8,
+        "sunHaloBrightness": 1,
+        "moonHaloScale": 3,
+        "moonHaloBrightness": 0
+      },
+      "storage": "RGBA16F"
+    },
+    "visible": true,
+    "focused": true
+  },
+  {
+    "name": "two-layers",
+    "utc": "2026-06-21T17:00:00Z",
+    "buffer": [
+      1920,
+      1080
+    ],
+    "camera": {
+      "position": [
+        -2492833.869422986,
+        -18884013.5304159,
+        13541839.779073667
+      ],
+      "direction": [
+        0.10642240853438871,
+        0.8061837683423432,
+        -0.5820154659655351
+      ],
+      "up": [
+        -0.9307035485640135,
+        -0.1252442803560384,
+        -0.3436637527125183
+      ],
+      "fovy": 1.0471975511965976
+    },
+    "clouds": {
+      "quality": "medium",
+      "storage": "RGBA16F",
+      "parameters": {
+        "coverage": 0.62,
+        "density": 1.1,
+        "base": 1.5,
+        "thickness": 3.8,
+        "wind": 24,
+        "detail": 0.55,
+        "seed": 13,
+        "type": 0,
+        "highCoverage": 0.35,
+        "highBase": 9,
+        "highThickness": 1.5,
+        "highWind": 48,
+        "highType": 0,
+        "highOpticalDepth": 0.35,
+        "highAnisotropy": 0.78,
+        "highAlbedo": 0.98,
+        "highMultiple": 0.12
+      },
+      "motion": {
+        "angle": 0,
+        "highAngle": 0,
+        "evolution": 0
+      }
+    },
+    "atmosphere": {
+      "parameters": {
+        "elevation": 66.73643899227147,
+        "azimuth": 114.85512651455099,
+        "rayleigh": 1,
+        "mie": 1,
+        "ozone": 1,
+        "exposure": 8,
+        "sunScale": 3.2,
+        "moonScale": 3,
+        "sunBrightness": 1,
+        "moonBrightness": 2.4,
+        "sunHaloScale": 2.8,
+        "sunHaloBrightness": 1,
+        "moonHaloScale": 3,
+        "moonHaloBrightness": 0
+      },
+      "storage": "RGBA16F"
+    },
+    "visible": true,
+    "focused": true
+  }
+]

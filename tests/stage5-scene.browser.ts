@@ -7,6 +7,7 @@ import {cloudDefaults,type CloudQuality} from '../src/effects/global-clouds/conf
 import {prepareCelestialFrame} from './celestialFixture';
 import {celestialPositions} from '../src/effects/hillaire-atmosphere/CelestialLighting';
 import {webglTrace} from './webglTrace';
+import {reducedCloudModel} from './cloudCompileReduction';
 
 const status=document.querySelector('#status')!,boot=performance.now(),query=new URLSearchParams(location.search);
 const longTasks:{startMs:number;durationMs:number}[]=[];
@@ -29,7 +30,7 @@ try{
   const clouds=new GlobalCloudEffect({sunDirection:()=>atmosphere.sunDirection,moonDirection:()=>atmosphere.moonDirection,moonFraction:()=>atmosphere.moonLightFraction,
     atmosphereEnabled:()=>atmosphere.enabled,transmittance:()=>atmosphere.transmissionTexture,multipleScattering:()=>atmosphere.multipleScatteringTexture,
     skyIrradiance:()=>atmosphere.skyIrradianceTexture,medium:()=>atmosphere.mediumParameters,exposure:()=>atmosphere.parameters.exposure,
-    backgroundStage:atmosphere.radianceStageName,backgroundIsHdr:()=>atmosphere.renderTargetMode==='RGBA16F'});
+    backgroundStage:atmosphere.radianceStageName,backgroundIsHdr:()=>atmosphere.renderTargetMode==='RGBA16F'},query.has('reduce')?reducedCloudModel(query.get('reduce')!):undefined);
   (clouds as GlobalCloudEffect&{assetCacheEnabled?:boolean}).assetCacheEnabled=query.get('cache')!=='off';
   const cloudStart=performance.now();clouds.mount({viewer,onStatus:m=>{status.textContent=m;}});const cloudMountMs=performance.now()-cloudStart;
   clouds.setPaused(true);clouds.setMotion({angle:0,highAngle:0,evolution:0});
@@ -38,7 +39,7 @@ try{
   const capture=(name:string)=>{const figure=document.createElement('figure'),img=new Image();img.alt=name;img.dataset.name=name;img.src=viewer.canvas.toDataURL('image/png');figure.append(img);const caption=document.createElement('figcaption');caption.textContent=name;figure.append(caption);document.querySelector('#evidence')!.append(figure);return {name,state:state()};};
   await clouds.ready;await atmosphere.ready;const resourcesReadyMs=performance.now()-boot;await frame(10);
   const renderer=gl.getExtension('WEBGL_debug_renderer_info');
-  const startup={viewerWallMs,atmosphereMountMs,cloudMountMs,firstFrameMs,firstInteractiveTurnMs,resourcesReadyMs,fullFrameReadyMs:performance.now()-boot,cloudInitialization:clouds.initialization,lunarTexture:atmosphere.lunarTextureInfo,
+  const startup={reduction:query.get('reduce'),viewerWallMs,atmosphereMountMs,cloudMountMs,firstFrameMs,firstInteractiveTurnMs,resourcesReadyMs,fullFrameReadyMs:performance.now()-boot,cloudInitialization:clouds.initialization,lunarTexture:atmosphere.lunarTextureInfo,
     longTasks,longestMainTaskMs:Math.max(0,...longTasks.map(t=>t.durationMs)),shaderApi:trace.timeline,firstDrawGpu:trace.firstGpu,state:state(),renderer:renderer?gl.getParameter(renderer.UNMASKED_RENDERER_WEBGL):gl.getParameter(gl.RENDERER),
     boundaries:'CPU API times are wall times incl. scheduler/GC/driver waits. Link/status/draw may share deferred compilation. firstInteractiveTurn = first postRender + timer task; no synthetic input latency claim.'};
   document.querySelector('#startup-result')!.textContent=JSON.stringify(startup,null,2);capture('startup-global');status.textContent='READY';
@@ -75,9 +76,13 @@ try{
   });
   switchButton.onclick=run(async()=>{
     await configure('global');const results=[];
-    for(const [quality,hdr] of [['low',true],['high',true],['medium',false],['medium',true]] as const){
-      const start=performance.now(),timelineStart=trace.timeline.length;clouds.setQuality(quality as CloudQuality);clouds.setHdrEnabled(hdr);
-      await frame(3);results.push({quality,hdr,wallMs:performance.now()-start,shaderApi:trace.timeline.slice(timelineStart),evidence:capture(`switch-${quality}-${hdr?'hdr':'rgba8'}`)});
+    for(const [quality,hdr] of [['low',true],['high',true],['medium',false],['medium',true],['low',true],['high',true],['medium',true]] as const){
+      const start=performance.now(),timelineStart=trace.timeline.length,attachmentStart=trace.attachments.length;clouds.setQuality(quality as CloudQuality);clouds.setHdrEnabled(hdr);
+      await frame(3);
+      const wallMs=performance.now()-start,shaderApi=trace.timeline.slice(timelineStart),attachments=trace.attachments.slice(attachmentStart),initial=state();
+      // Separate rounds: never nest pass timers inside a whole-frame query.
+      const timing=query.has('quality-gpu')?{frame:await trace.collect('frame',200,90000),passes:await trace.collect('passes',200,90000)}:undefined;
+      results.push({quality,hdr,wallMs,shaderApi,attachments,initial,final:state(),timing,evidence:capture(`switch-${quality}-${hdr?'hdr':'rgba8'}`)});
       document.querySelector('#switch-result')!.textContent=JSON.stringify({complete:false,results},null,2);
     }
     document.querySelector('#switch-result')!.textContent=JSON.stringify({complete:true,results},null,2);status.textContent='SWITCHES COMPLETE';

@@ -7,14 +7,18 @@ type Run={id:number;mode:Mode;target:number;started:number;values:Record<string,
  * separate. Frame and pass rounds are exclusive; no nested TIME_ELAPSED. */
 export function webglTrace(gl:WebGL2RenderingContext){
   const ext=gl.getExtension('EXT_disjoint_timer_query_webgl2');
-  const timeline:{label:string;kind:string;at:number;durationMs:number}[]=[],firstGpu:Record<string,number[]>={};
+  const timeline:{label:string;kind:string;at:number;durationMs:number;program?:number;sourceHash?:string}[]=[],firstGpu:Record<string,number[]>={};
+  const sources=new WeakMap<WebGLShader,string>(),programIds=new WeakMap<WebGLProgram,number>();let programSerial=0;
+  const hash=(source:string)=>{let h=2166136261;for(let i=0;i<source.length;i++)h=Math.imul(h^source.charCodeAt(i),16777619);return (h>>>0).toString(16).padStart(8,'0');};
+  const attachments:{kind:string;at:number;width?:number;height?:number}[]=[];
   const shaderLabels=new WeakMap<WebGLShader,string>(),programLabels=new WeakMap<WebGLProgram,string>(),drawn=new WeakSet<WebGLProgram>();
   const pending:Pending[]=[],restore:(()=>void)[]=[];
   let current:WebGLProgram|null=null,active:Run|undefined,serial=0,frameQuery:WebGLQuery|null=null,frameStart=0;
   const classify=(source:string)=>source.includes('integrateCloudMedium')?'cloud-volume':source.includes('u_skyRadianceHdr')?'cloud-resolve':source.includes('u_moonAlbedo')?'atmosphere-composite':source.includes('sampleSkyIrradiance')?'sky-irradiance':source.includes('skyViewDirection')?'sky-view':'other';
-  const originalShader=gl.shaderSource.bind(gl);gl.shaderSource=(s,source)=>{shaderLabels.set(s,classify(source));originalShader(s,source);};restore.push(()=>{gl.shaderSource=originalShader;});
-  const originalLink=gl.linkProgram.bind(gl);gl.linkProgram=p=>{const labels=(gl.getAttachedShaders(p)??[]).map(s=>shaderLabels.get(s)??'other');const label=labels.find(s=>s!=='other')??'other';programLabels.set(p,label);const start=performance.now();originalLink(p);timeline.push({label,kind:'linkProgram CPU call',at:start,durationMs:performance.now()-start});};restore.push(()=>{gl.linkProgram=originalLink;});
-  const originalStatus=gl.getProgramParameter.bind(gl);gl.getProgramParameter=(p,key)=>{const start=performance.now(),value=originalStatus(p,key);if(key===gl.LINK_STATUS)timeline.push({label:programLabels.get(p)??'other',kind:'LINK_STATUS CPU wait',at:start,durationMs:performance.now()-start});return value;};restore.push(()=>{gl.getProgramParameter=originalStatus;});
+  const originalShader=gl.shaderSource.bind(gl);gl.shaderSource=(s,source)=>{shaderLabels.set(s,classify(source));sources.set(s,source);originalShader(s,source);};restore.push(()=>{gl.shaderSource=originalShader;});
+  const originalLink=gl.linkProgram.bind(gl);gl.linkProgram=p=>{const shaders=gl.getAttachedShaders(p)??[],labels=shaders.map(s=>shaderLabels.get(s)??'other');const label=labels.find(s=>s!=='other')??'other';programLabels.set(p,label);const program=programIds.get(p)??++programSerial;programIds.set(p,program);const start=performance.now();originalLink(p);timeline.push({label,program,sourceHash:hash(shaders.map(s=>sources.get(s)??'').join('\n')),kind:'linkProgram CPU call',at:start,durationMs:performance.now()-start});};restore.push(()=>{gl.linkProgram=originalLink;});
+  const originalStatus=gl.getProgramParameter.bind(gl);gl.getProgramParameter=(p,key)=>{const start=performance.now(),value=originalStatus(p,key);if(key===gl.LINK_STATUS)timeline.push({label:programLabels.get(p)??'other',program:programIds.get(p),kind:'LINK_STATUS CPU wait',at:start,durationMs:performance.now()-start});return value;};restore.push(()=>{gl.getProgramParameter=originalStatus;});
+  const originalImage=gl.texImage2D.bind(gl);gl.texImage2D=((...args:Parameters<typeof originalImage>)=>{attachments.push({kind:'texImage2D submit',at:performance.now(),width:typeof args[3]==='number'?args[3]:undefined,height:typeof args[4]==='number'?args[4]:undefined});originalImage(...args);}) as typeof gl.texImage2D;restore.push(()=>{gl.texImage2D=originalImage;});
   const originalUse=gl.useProgram.bind(gl);gl.useProgram=p=>{current=p;originalUse(p);};restore.push(()=>{gl.useProgram=originalUse;});
   function draw(operation:()=>void){
     const label=current?programLabels.get(current)??'other':'other',first=Boolean(current&&!drawn.has(current));
@@ -57,7 +61,7 @@ export function webglTrace(gl:WebGL2RenderingContext){
     if(frameQuery&&ext){gl.endQuery(ext.TIME_ELAPSED_EXT);pending.push({query:frameQuery,label:'frame',run:active?.id??-1});frameQuery=null;}
     if(active)active.submit.push(performance.now()-frameStart);
   }
-  return {timeline,firstGpu,beforeFrame,afterFrame,
+  return {timeline,firstGpu,attachments,beforeFrame,afterFrame,
     collect(mode:Mode,target=200,timeoutMs=90000){if(active)throw new Error('Overlapping timer rounds are forbidden');return new Promise<unknown>(resolve=>{const id=++serial;active={id,mode,target,started:performance.now(),values:{},frameIntervals:[],submit:[],hiddenFrames:0,unfocusedFrames:0,disjoint:0,lastFrame:0,resolve,timeout:setTimeout(()=>finish('time limit; evidence may be insufficient'),timeoutMs)};});},
     destroy(){finish('disposed');if(frameQuery&&ext){gl.endQuery(ext.TIME_ELAPSED_EXT);gl.deleteQuery(frameQuery);frameQuery=null;}pending.forEach(p=>gl.deleteQuery(p.query));pending.length=0;restore.reverse().forEach(fn=>fn());}
   };
