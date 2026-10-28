@@ -2,6 +2,11 @@ import {sampleVolume,VOXEL_SIZE} from './VoxelCloudField';
 import {CUMULUS_NOISE_SIZE} from './CumulusNoise';
 
 export const CLOUD_OPTICS_SIZE=32;
+export const CLOUD_OPTICS_VERSION=3;
+export const CLOUD_COMPONENTS=8;
+export interface CloudOpticsMaterial {detail:number;thickness:number;}
+export const defaultOpticsMaterial:CloudOpticsMaterial={detail:.55,thickness:3.8};
+export const opticsMaterialKey=(m:CloudOpticsMaterial)=>`${CLOUD_OPTICS_VERSION}/${m.detail}/${m.thickness}`;
 const smooth=(a:number,b:number,x:number)=>{const t=Math.max(0,Math.min(1,(x-a)/(b-a)));return t*t*(3-2*t);};
 const mix=(a:number,b:number,t:number)=>a+(b-a)*t;
 /** Average transmission, not density: unresolved opaque columns still have gaps. */
@@ -24,8 +29,9 @@ export function meanColumnReflectance(depths:readonly number[],scale:number){
  * A = probability(T < .9). Cut spans [0,.52]; type [0,1]; log2 scale [-5,7].
  * Defaults define the voxel ensemble; seed/motion change placement, not its law.
  */
-export function createCloudOptics(voxels:Uint8Array,noise:Uint8Array){
+export function createCloudOpticsData(voxels:Uint8Array,noise:Uint8Array,material:CloudOpticsMaterial=defaultOpticsMaterial){
   const size=CLOUD_OPTICS_SIZE,columns=256,heights=24,bytes=new Uint8Array(size**3*4);
+  const components=new Uint8Array(size*size*CLOUD_COMPONENTS*4);
   const noiseAt=(p:number[],scale:number,c:number)=>sampleVolume(noise,CUMULUS_NOISE_SIZE,...p.map(v=>v/scale*64-.5) as [number,number,number],c);
   const voxelAt=(p:number[],scale:number,c:number)=>sampleVolume(voxels,VOXEL_SIZE,...p.map(v=>v/scale*128-.5) as [number,number,number],c);
   const origins=Array.from({length:columns},(_,i)=>{
@@ -39,7 +45,7 @@ export function createCloudOptics(voxels:Uint8Array,noise:Uint8Array){
     for(let c=0;c<columns;c++){
       const {n}=origins[c];
       const samples=Array.from({length:heights},(_,j)=>{
-        const h=(j+.5)/heights,p=n.map(v=>v*(6378.137+1.5+3.8*top*h));
+        const h=(j+.5)/heights,p=n.map(v=>v*(6378.137+1.5+material.thickness*top*h));
         const rotated=[p[0]*.36+p[1]*.48-p[2]*.8,-p[0]*.8+p[1]*.6,p[0]*.48+p[1]*.64+p[2]*.6];
         const a=p.map(v=>v+13*.23),b=rotated.map(v=>v+13*.31);
         const ra=voxelAt(a,7.83,0),rb=voxelAt(b,13.57,0)*.8;
@@ -49,8 +55,10 @@ export function createCloudOptics(voxels:Uint8Array,noise:Uint8Array){
         const folded=Math.abs(2*Math.abs(2*fine[1]-1)-1);
         let detail=mix(1-Math.abs(2*fine[3]-1),fine[0]*.55+fine[1]*.3+fine[2]*.15,morphology);
         detail=mix(detail,mix(1-folded**3,folded**2,morphology),1-smooth(.015,.12,.02));
-        return {field:Math.max(ra,rb)-(1-detail)*.55*.28-h**mix(4,2.8,type)*.4,
-          interior:1-Math.exp(-3*Math.max(0,Math.min(bodyDepth,3.8*top*h,3.8-3.8*top*h))),
+        return {field:Math.max(ra,rb)-(1-detail)*material.detail*.28-h**mix(4,2.8,type)*.4,
+          interior:1-Math.exp(-3*Math.max(0,Math.min(bodyDepth,material.thickness*top*h,material.thickness-material.thickness*top*h))),
+          // Normalize the table's depth to 3.8 km. Runtime thickness/3.8 is
+          // still a scale, but physical sample locations above change its law.
           weight:smooth(0,.045,h)*(1-smooth(.9,1,h))*9*3.8*top/heights};
       });
       for(let x=0;x<size;x++){
@@ -61,6 +69,17 @@ export function createCloudOptics(voxels:Uint8Array,noise:Uint8Array){
     }
     for(let x=0;x<size;x++){
       const mean=depths[x].reduce((s,v)=>s+v,0)/columns;
+      // Keep empty columns exactly empty. Eight positive depth strata with
+      // quadratic quantile boundaries resolve the thin tail more densely. Their
+      // quadrature error is measured against the original 256-column ensemble.
+      const positive=depths[x].map((tau,c)=>({tau,interior:interiors[x][c]})).filter(v=>v.tau>0).sort((a,b)=>a.tau-b.tau);
+      for(let k=0;k<CLOUD_COMPONENTS;k++){
+        const a=Math.floor((k/CLOUD_COMPONENTS)**2*positive.length),b=Math.floor(((k+1)/CLOUD_COMPONENTS)**2*positive.length),count=b-a,index=(x+size*(y+size*k))*4;
+        if(count===0)continue;
+        const values=positive.slice(a,b),tau=values.reduce((s,v)=>s+v.tau,0)/count,inside=values.reduce((s,v)=>s+v.interior,0)/count;
+        const code=Math.round(Math.log1p(tau)/Math.log(65)*65535);
+        components[index]=code>>8;components[index+1]=code&255;components[index+2]=count;components[index+3]=Math.round(inside*255);
+      }
       for(let z=0;z<size;z++){
         const index=(x+size*(y+size*z))*4,scale=2**(-5+12*z/(size-1));
         bytes[index]=Math.round(meanColumnOpacity(depths[x],scale)*255);
@@ -72,5 +91,6 @@ export function createCloudOptics(voxels:Uint8Array,noise:Uint8Array){
       }
     }
   }
-  return bytes;
+  return {optics:bytes,components};
 }
+export function createCloudOptics(voxels:Uint8Array,noise:Uint8Array,material:CloudOpticsMaterial=defaultOpticsMaterial){return createCloudOpticsData(voxels,noise,material).optics;}

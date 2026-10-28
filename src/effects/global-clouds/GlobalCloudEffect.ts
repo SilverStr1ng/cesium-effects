@@ -1,9 +1,7 @@
 import {Cartesian3,Math as CesiumMath,Matrix4,PixelDatatype,PostProcessStage,PostProcessStageComposite,PostProcessStageSampleMode} from 'cesium';
 import type {EffectContext,SceneEffect} from '../types';
 import {cloudDefaults,cloudQualities,type CloudParameters,type CloudQuality,type CloudView} from './config';
-import {createWeather,WEATHER_WIDTH,WEATHER_HEIGHT} from './WeatherField';
-import {createCumulusNoise,CUMULUS_NOISE_SIZE} from './CumulusNoise';
-import {createRepeatingVolume,createWeatherTexture,type GpuTexture} from '../../scene/DynamicTexture';
+import type {GpuTexture} from '../../scene/DynamicTexture';
 import {POLAR_SCALE} from '../hillaire-atmosphere/atmosphereMath';
 import density from './shaders/density.glsl?raw';
 import voxel from './shaders/voxel.glsl?raw';
@@ -20,8 +18,8 @@ import atmosphereCommon from '../hillaire-atmosphere/shaders/common.glsl?raw';
 import atmosphereTransport from '../hillaire-atmosphere/shaders/integrate.glsl?raw';
 import skyIrradiance from '../hillaire-atmosphere/shaders/sky-irradiance-sample.glsl?raw';
 import {emptySceneDepth} from '../../scene/sceneDepth';
-import {measureResource,type CloudInitialization} from './CloudInitialization';
-import {loadCloudAssets,destroyCloudTextures} from './CloudAssetLoader';
+import type {CloudInitialization} from './CloudInitialization';
+import {CloudAssetManager} from './CloudAssetManager';
 
 export interface CloudLighting {
   sunDirection:()=>Cartesian3;
@@ -56,22 +54,24 @@ export class GlobalCloudEffect implements SceneEffect {
   readonly parameters={...cloudDefaults};
   enabled=true;paused=false;quality:CloudQuality='medium';
   private context?:EffectContext;
-  private weather?:GpuTexture;
-  // Keep the displayed seed paired with the adopted weather while a worker
-  // prepares a newer request. The UI parameter may already name the next seed.
-  private weatherSeed=cloudDefaults.seed;
-  private noise?:GpuTexture;
-  private voxels?:GpuTexture;
-  private optics?:GpuTexture;
-  private cirrus?:GpuTexture;
-  private iceRibbon?:GpuTexture;
-  private iceAnisotropic?:GpuTexture;
-  private assetLoad?:ReturnType<typeof loadCloudAssets>;
-  private assetEpoch=0;
+  private assets?:CloudAssetManager;
+  private ownsAssets=true;
+  private removeAssets?:()=>void;
+  private get weather(){return this.assets?.textures.weather;}
+  private get weatherSeed(){return this.assets?.seed??cloudDefaults.seed;}
+  private get noise(){return this.assets?.textures.noise;}
+  private get voxels(){return this.assets?.textures.voxels;}
+  private get optics(){return this.assets?.textures.optics;}
+  private get cirrus(){return this.assets?.textures.cirrus;}
+  private get iceRibbon(){return this.assets?.textures.iceRibbon;}
+  private get iceAnisotropic(){return this.assets?.textures.iceAnisotropic;}
   /** Optional bounded disk cache; deterministic diagnostics can bypass it. */
   assetCacheEnabled=true;
-  ready:Promise<void>=Promise.resolve();
-  initialization:CloudInitialization={startedAt:0,generation:[],uploads:[],status:'loading'};
+  get ready(){return this.assets?.ready??Promise.resolve();}
+  get initialization():CloudInitialization{return this.assets?.initialization??{startedAt:0,generation:[],uploads:[],status:'loading'};}
+  get materialInitialization(){return this.assets?.materialMetrics;}
+  /** The comparison owns this manager; mounted models only borrow its assets. */
+  useAssets(assets:CloudAssetManager){if(this.context)throw new Error('Assign cloud assets before mount');this.assets=assets;this.ownsAssets=false;}
   get voxelReady(){return Boolean(this.voxels);}
   private voxelEnabled=true;
   // Dense global banks currently cost more distance fetches than they save.
@@ -97,31 +97,22 @@ export class GlobalCloudEffect implements SceneEffect {
   private get sun(){return this.light?.sunDirection()??this.defaultSun;}
   private uniforms(){
     return {u_weather:()=>this.weather!,u_noise:()=>this.noise!,u_base:()=>this.parameters.base,
-      u_thickness:()=>this.parameters.thickness,u_coverage:()=>this.parameters.coverage,u_density:()=>this.parameters.density,
-      u_detail:()=>this.parameters.detail,u_seed:()=>this.weatherSeed,u_windAngle:()=>this.windAngle,
+      u_thickness:()=>this.assets?.textures.optics?this.assets.material.thickness:this.parameters.thickness,u_coverage:()=>this.parameters.coverage,u_density:()=>this.parameters.density,
+      u_detail:()=>this.assets?.textures.optics?this.assets.material.detail:this.parameters.detail,u_seed:()=>this.weatherSeed,u_windAngle:()=>this.windAngle,
       u_evolution:()=>this.evolution,u_windSpeed:()=>this.parameters.wind,u_sun:()=>this.sun,
       u_emptySceneDepth:()=>this.context?emptySceneDepth(this.context.viewer.scene):false,
       u_cloudType:()=>this.parameters.type,u_highCoverage:()=>this.parameters.highCoverage,
-      u_highBase:()=>this.parameters.highBase,u_highThickness:()=>this.parameters.highThickness,
+      u_highBase:()=>Math.max(this.parameters.highBase,this.parameters.base+(this.assets?.textures.optics?this.assets.material.thickness:this.parameters.thickness)+.5),u_highThickness:()=>this.parameters.highThickness,
       u_highType:()=>this.parameters.highType,u_highOpticalDepth:()=>this.parameters.highOpticalDepth,
       u_highAnisotropy:()=>this.parameters.highAnisotropy,u_highAlbedo:()=>this.parameters.highAlbedo,u_highMultiple:()=>this.parameters.highMultiple,
       u_highAngle:()=>this.highWindAngle};
   }
   mount(context:EffectContext){
-    this.initialization={startedAt:performance.now(),generation:[],uploads:[],status:'loading'};
-    const generate=<T>(name:string,fn:()=>T)=>measureResource(this.initialization.generation,name,'main',fn);
-    const upload=<T>(name:string,fn:()=>T)=>measureResource(this.initialization.uploads,name,'main',fn);
+    if(this.context)throw new Error('Cloud effect is already mounted');
     this.context=context;const scene=context.viewer.scene;
-    if(this.id==='global-clouds'){
-      this.loadAssets(false);
-    }else{
-      const weather=generate('weather',()=>createWeather(this.parameters.seed));
-      this.weather=upload('weather',()=>createWeatherTexture(scene,WEATHER_WIDTH,WEATHER_HEIGHT,weather));
-      this.weatherSeed=this.parameters.seed;
-      const noise=generate('noise',createCumulusNoise);
-      this.noise=upload('noise',()=>createRepeatingVolume(scene,CUMULUS_NOISE_SIZE,noise.bytes,noise.mips));
-      this.initialization.status='ready';this.initialization.readyWallMs=performance.now()-this.initialization.startedAt;
-    }
+    if(this.ownsAssets){this.assets=new CloudAssetManager(scene,context.onStatus);this.assets.cacheEnabled=this.assetCacheEnabled;}
+    this.removeAssets=this.assets!.subscribe(()=>{if(!this.stage)this.buildStage();});
+    this.assets!.request(this.parameters.seed,this.parameters);
     this.buildStage();
     this.removeUpdate=scene.preUpdate.addEventListener(()=>{
       // Disabled producers have no output attachment in Cesium's texture cache.
@@ -141,24 +132,6 @@ export class GlobalCloudEffect implements SceneEffect {
       this.pixelAngle=2*Math.tan((frustum.fovy??Math.PI/3)*.5)/Math.max(1,scene.drawingBufferHeight*cloudQualities[this.quality].scale);
     });
   }
-  private loadAssets(weatherOnly:boolean){
-    if(!this.context)return;const replacing=Boolean(this.assetLoad);
-    if(replacing)this.initialization.status='cancelled';this.assetLoad?.cancel();const epoch=++this.assetEpoch,context=this.context;
-    if(weatherOnly||replacing)this.initialization={startedAt:performance.now(),generation:[],uploads:[],status:'loading'};
-    const metrics=this.initialization,seed=this.parameters.seed,request=loadCloudAssets(context.viewer.scene,seed,{weatherOnly,cache:this.assetCacheEnabled,metrics});
-    this.assetLoad=request;
-    this.ready=request.promise.then(({textures,fellBack})=>{
-      if(epoch!==this.assetEpoch||!this.context){destroyCloudTextures(textures);return;}
-      for(const [key,value] of Object.entries(textures)){
-        const name=key as 'weather'|'noise'|'cirrus'|'iceRibbon'|'iceAnisotropic'|'voxels'|'optics';
-        const old=this[name];this[name]=value;if(old&&!old.isDestroyed())old.destroy();
-      }
-      this.weatherSeed=seed;
-      metrics.status=fellBack?'fallback':'ready';if(!this.stage)this.buildStage();
-      context.onStatus(fellBack?'Worker 不可用，使用程序化云':'云资源已就绪');
-    }).catch(error=>{if(epoch===this.assetEpoch&&this.context){metrics.status='failed';context.onStatus(`云资源上传失败：${String(error)}`);}})
-      .finally(()=>{metrics.readyWallMs=performance.now()-metrics.startedAt;if(epoch===this.assetEpoch)this.assetLoad=undefined;});
-  }
   private buildStage(){
     if(!this.context||!this.weather||!this.noise)return;const stages=this.context.viewer.scene.postProcessStages;
     if(this.stage)stages.remove(this.stage);
@@ -169,13 +142,13 @@ export class GlobalCloudEffect implements SceneEffect {
     const outputSource='#define CLOUD_RUNTIME_STORAGE\n'+atmosphereCommon+display+storage+radiometry;
     const volume=new PostProcessStage({name:`${this.id}-volume`,textureScale:quality.scale,
       pixelDatatype:hdr?PixelDatatype.HALF_FLOAT:PixelDatatype.UNSIGNED_BYTE,
-      fragmentShader:`#define LIGHT_STEPS ${quality.lightSteps}\n#define CLOUD_SUBSTEPS ${quality.substeps}\n`+runtimeQuality+(this.model.defines??'')+outputSource+atmosphereTransport+this.model.density+
+      fragmentShader:runtimeQuality+(this.model.defines??'')+outputSource+atmosphereTransport+this.model.density+
         `uniform sampler2D depthTexture;uniform bool u_atmosphere;uniform vec3 u_camera,u_moon;
         uniform float u_pixelAngle,u_moonFraction,u_moonGain;struct CloudPhases {vec3 sun;vec3 moon;};`+
         skyIrradiance+this.model.lighting+'\n#ifdef LAYERED_CLOUDS\n'+intervals+'\n#endif\n'+cloudTransport+march,
       sampleMode:PostProcessStageSampleMode.LINEAR,
       uniforms:{...this.uniforms(),
-        u_cloudSteps:quality.steps,u_cloudIntervals:4,u_cloudRepresentations:2,u_cloudHdr:hdr,
+        u_cloudSteps:quality.steps,u_lightSteps:quality.lightSteps,u_cloudSubsteps:quality.substeps,u_cloudIntervals:4,u_cloudRepresentations:2,u_cloudHdr:hdr,
         // Cesium 1.146 allocates by each stage's immediate dependencies, not
         // future consumers. Keep the HDR producer live through this write:
         // at scale=1 its attachment otherwise aliases the cloud volume before
@@ -183,7 +156,8 @@ export class GlobalCloudEffect implements SceneEffect {
         ...(this.light?.backgroundStage?{u_preserveSkyRadiance:this.light.backgroundStage}:{}),
         u_camera:()=>this.camera,u_pixelAngle:()=>this.pixelAngle,u_debugView:()=>cloudDebugViews.indexOf(this.debugView),
         u_voxels:()=>this.voxels??this.noise!,u_voxelReady:()=>Boolean(this.voxels&&this.voxelEnabled),u_skipVoxels:()=>this.skipVoxels,
-        u_cloudOptics:()=>this.optics??this.noise!,u_opticsReady:()=>Boolean(this.optics&&this.voxelEnabled),u_columnGrid:12,
+        u_cloudOptics:()=>this.optics??this.noise!,u_opticsReady:()=>Boolean(this.optics&&this.voxelEnabled),u_columnGrid:12,u_columnSections:2,u_columnQuadrature:4,u_columnOrders:3,
+        u_cloudComponents:()=>this.assets?.textures.components??this.noise!,u_columnComponents:8,
         u_cirrus:()=>this.cirrus??this.noise!,
         u_iceRibbon:()=>this.iceRibbon??this.weather!,
         u_iceAnisotropic:()=>this.iceAnisotropic??this.noise!,
@@ -205,7 +179,7 @@ export class GlobalCloudEffect implements SceneEffect {
     this.stage.enabled=this.enabled;stages.add(this.stage);
   }
   updateParameters(p:Partial<CloudParameters>){
-    const seed=this.parameters.seed;Object.assign(this.parameters,p);const v=this.parameters;
+    Object.assign(this.parameters,p);const v=this.parameters;
     v.coverage=Math.max(0,Math.min(1,v.coverage));v.base=Math.max(.2,Math.min(15,v.base));v.thickness=Math.max(.5,Math.min(12,v.thickness));
     v.density=Math.max(0,Math.min(4,v.density));v.detail=Math.max(0,Math.min(1,v.detail));v.seed=Math.max(0,Math.min(9999,Math.round(v.seed)));
     v.type=Math.max(0,Math.min(3,Math.round(v.type)));v.highCoverage=Math.max(0,Math.min(1,v.highCoverage));
@@ -214,10 +188,7 @@ export class GlobalCloudEffect implements SceneEffect {
     v.highThickness=Math.max(.3,Math.min(4,v.highThickness));v.highWind=Math.max(0,Math.min(200,v.highWind));
     v.highType=Math.round(Math.max(0,Math.min(1,v.highType)));v.highOpticalDepth=Math.max(0,Math.min(2,v.highOpticalDepth));
     v.highAnisotropy=Math.max(0,Math.min(.9,v.highAnisotropy));v.highAlbedo=Math.max(0,Math.min(1,v.highAlbedo));v.highMultiple=Math.max(0,Math.min(.3,v.highMultiple));
-    if(v.seed!==seed&&this.context){
-      if(this.id==='global-clouds')this.loadAssets(Boolean(this.noise));
-      else{this.weather?.copyFrom({source:{width:WEATHER_WIDTH,height:WEATHER_HEIGHT,arrayBufferView:createWeather(v.seed)}});this.weatherSeed=v.seed;}
-    }
+    if(this.context)this.assets!.request(v.seed,v);
   }
   setQuality(value:CloudQuality){if(this.quality===value)return;this.quality=value;this.buildStage();}
   /** Also provides a deterministic fallback path for unsupported float targets. */
@@ -241,12 +212,10 @@ export class GlobalCloudEffect implements SceneEffect {
       orientation:{heading:CesiumMath.toRadians(mode==='global'?0:245),pitch:CesiumMath.toRadians(mode==='global'?-90:mode==='above'||mode==='high'?-18:mode==='inside'||mode==='between'?0:12),roll:0}});
   }
   destroy(){
-    if(!this.context)return;this.removeUpdate?.();
-    if(this.initialization.status==='loading')this.initialization.status='cancelled';
-    this.assetEpoch++;this.assetLoad?.cancel();this.assetLoad=undefined;
+    if(!this.context)return;this.removeUpdate?.();this.removeAssets?.();
     const s=this.context.viewer.scene;if(this.stage)s.postProcessStages.remove(this.stage);
     this.resolveStage=undefined;this.stage=undefined;
-    for(const t of [this.noise,this.weather,this.voxels,this.optics,this.cirrus,this.iceRibbon,this.iceAnisotropic])if(t&&!t.isDestroyed())t.destroy();this.voxels=undefined;this.optics=undefined;this.cirrus=undefined;this.iceRibbon=undefined;this.iceAnisotropic=undefined;
-    this.weather=undefined;this.noise=undefined;this.context=undefined;this.lastTime=0;
+    if(this.ownsAssets)this.assets?.destroy();
+    this.context=undefined;this.lastTime=0;
   }
 }

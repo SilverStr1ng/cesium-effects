@@ -6,6 +6,7 @@ export interface CloudInitialization {
   workerWallMs?:number;readyWallMs?:number;status:'loading'|'ready'|'fallback'|'failed'|'cancelled';
   cache?:string;
   cacheReadMs?:number;cacheWriteMs?:number;
+  fixedAssetVersion?:number;opticsVersion?:number;
 }
 export function measureResource<T>(target:ResourceTiming[],name:string,thread:ResourceTiming['thread'],operation:()=>T):T{
   const start=performance.now();try{return operation();}finally{target.push({name,thread,durationMs:performance.now()-start});}

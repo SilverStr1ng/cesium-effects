@@ -230,9 +230,12 @@ async function boot() {
   const dispose=()=>{ clearTimeout(noticeTimer); window.removeEventListener('keydown',keyHandler); removeProfiler(); removeStats(); cloudPanel.destroy(); environmentPanel.destroy(); effect.destroy(); clouds.destroy(); atmosphere.destroy(); if (!viewer.isDestroyed()) viewer.destroy(); };
   window.addEventListener('pagehide',dispose,{once:true});
   import.meta.hot?.dispose(()=>{window.removeEventListener('pagehide',dispose);dispose();});
+  // The real application lifecycle is also used by the entry regression. No
+  // second viewer or simplified cloud-only boot path is constructed by it.
+  return {viewer,clouds,atmosphere,destroy:dispose};
 }
 
-boot().catch(error=>{
+export const application=boot().catch(error=>{
   console.error(error);
   element('loading').classList.add('hidden');
   notify(`场景初始化失败：${error instanceof Error ? error.message : String(error)}`,true);

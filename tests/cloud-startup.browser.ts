@@ -6,13 +6,13 @@ import type {GpuTexture} from '../src/scene/DynamicTexture';
 const output=document.querySelector('#result')!,checks:{name:string;pass:boolean;[key:string]:unknown}[]=[];
 try{
   const {viewer}=await createScene(document.querySelector('#scene')!,()=>{}),context={viewer,onStatus:()=>{}},originalStages=viewer.scene.postProcessStages.length;
-  const assets=(cloud:GlobalCloudEffect)=>{const c=cloud as unknown as Record<string,GpuTexture>;return ['weather','noise','voxels','optics','cirrus','iceRibbon','iceAnisotropic'].map(k=>c[k]).filter(Boolean);};
+  const assets=(cloud:GlobalCloudEffect)=>{const c=cloud as unknown as Record<string,GpuTexture>&{assets:{textures:{components?:GpuTexture}}};return ['weather','noise','voxels','optics','cirrus','iceRibbon','iceAnisotropic'].map(k=>c[k]).concat(c.assets?.textures.components as GpuTexture).filter(Boolean);};
   const cancelled=new GlobalCloudEffect();cancelled.mount(context);const waiting=cancelled.ready;cancelled.destroy();await waiting;
   checks.push({name:'cancel immediately settles readiness and removes worker/stage resources',pass:cancelled.initialization.status==='cancelled'&&!cancelled.voxelReady&&viewer.scene.postProcessStages.length===originalStages});
   const cold=new GlobalCloudEffect();cold.assetCacheEnabled=false;cold.mount(context);cold.setPaused(true);cold.setQuality('high');cold.setHdrEnabled(false);await cold.ready;
   const coldAssets=assets(cold),coldInfo=structuredClone(cold.initialization);
   checks.push({name:'uncached generation occurs entirely in worker and deferred build preserves latest quality/format',pass:cold.initialization.generation.length===5&&cold.initialization.generation.every(t=>t.thread==='worker')&&cold.voxelReady&&cold.quality==='high'&&cold.renderTargetMode==='RGBA8',initialization:coldInfo});
-  cold.destroy();checks.push({name:'successful upload resources are effect-owned and all released',pass:coldAssets.length===7&&coldAssets.every(t=>t.isDestroyed())});
+  cold.destroy();checks.push({name:'successful upload resources are effect-owned and all released',pass:coldAssets.length===8&&coldAssets.every(t=>t.isDestroyed())});
   const cached=new GlobalCloudEffect();cached.mount(context);cached.setPaused(true);await cached.ready;cached.destroy();
   const warm=new GlobalCloudEffect();warm.mount(context);warm.setPaused(true);await warm.ready;
   checks.push({name:'warm cache skips material and weather generation',pass:warm.initialization.cache?.startsWith('fixed-hit/weather-hit')===true&&warm.initialization.generation.length===0,initialization:structuredClone(warm.initialization)});
