@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {filteredMean,spatialMean} from './farColumnReference';
+// Freeze the original diagnostic inputs: stage 7 morphology must not erase
+// the historical Jensen counterexample by changing its density field.
+import {filteredMean,spatialMean} from './fixtures/stage6/farColumnReference';
 const remaining=(h:number)=>1-h*h*(6-8*h+3*h*h);
 for(const patch of [0,3,5,7])for(const h0 of [0,.2,.5,.8])test(`finite common-profile response patch ${patch}, F28, h0 ${h0}`,()=>{
   const fraction=remaining(h0),response=(f:number)=>1-filteredMean(patch,28,1,0,1.1,3.8,f).moments[0];
