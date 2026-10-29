@@ -105,6 +105,8 @@ RTX5080、ANGLE/D3D11、内置浏览器，真实main入口；1920×1080、fovy60
 
 本轮没有重跑多seed、旋转横移、固定时间风序列、真实DEM/3D Tiles或其它GPU；之前证据属于之前轮次，不能移作本轮已验证。原高云与日月功能回归通过，但没有引入新的效果支线。
 
-`scripts/package-pr1.mjs` 生成独立证据目录与小于20MiB的独立ZIP附件：全部解压至同一目录，打开index.html；HTML用相对原图和内嵌状态，不需在线JSON请求。入口在localhost实际打开验证；本环境file://导航受限，未声称双击离线已经测过。包内含小型summary、逐点JSON、原始query、相机路径、前后原图、日志、源码标识、SHA-256清单及重放命令。附件上传至[PR #1](https://github.com/SilverStr1ng/cesium-effects/pull/1)讨论区，artifacts仍不进Git。
+`scripts/package-pr1.mjs` 生成独立证据目录与小于20MiB的独立ZIP附件：全部解压至同一目录，打开index.html；HTML用相对原图和内嵌状态，不需在线JSON请求。入口在localhost实际打开验证；本环境file://导航受限，未声称双击离线已经测过。包内含小型summary、逐点JSON、原始query、相机路径、前后原图、日志、源码标识、SHA-256清单及重放命令。artifacts仍不进Git。
+
+**远程附件交付尚未完成。** 已在GitHub的PR评论框准备报告；扩展上传要求本地file URL权限，未擅自扩大权限。尝试原生文件选择器时，Computer Use因无法可靠确认Windows浏览器URL而停止本轮操作，因此没有继续界面操作、没有提交该评论，也没有上传ZIP。本地包可供用户附件交付；[PR #1](https://github.com/SilverStr1ng/cesium-effects/pull/1)中的代码与Markdown报告可访问，但不能称原图/序列ZIP已远程可下载。这是独立的未完成交付项。
 
 停止原因是测得的精度—成本冲突，不是权限问题。剩余合并阻塞：变化世界场长路径、六个空间点、追加像素L/T、相对87b6的云pass成本、首次同步等待。修复阴影与补齐可访问证据可以保留，不能据此勾掉其余P1。
