@@ -128,7 +128,11 @@ CloudSegment integrateCloudMedium(vec3 d,vec2 segment){
                     #ifdef LAYERED_CLOUDS
                     if(statistical)source=cloudSource(farResponseIllumination(p,i,phases));else
                     #endif
+                    #ifdef CLOUD_RESOLVED_LIGHTING
+                    source=cloudSource(resolvedIllumination(p,rho,footprint,phases));
+                    #else
                     source=cloudSource(illumination(p,rho,footprint,phases));
+                    #endif
                 }
                 if(u_atmosphere)atmosphereSource(p,d,u_sun,airSource,airExtinction);
                 cloudTransportStep(result,airSource,airExtinction,rho,source,ds);
@@ -138,6 +142,9 @@ CloudSegment integrateCloudMedium(vec3 d,vec2 segment){
         }
         if(result.cloudT<.005&&u_debugView==0.)break;
     }
+    #ifdef CLOUD_DIAGNOSTICS
+    if(result.cloudT<.005&&processedEnd<segment.y)cloudDensityWork.z+=1.;
+    #endif
     // Preserve the complete clear-air segment even when cloud opacity permits
     // early exit. Its background subtraction must refer to the same endpoints.
     if(u_atmosphere&&processedEnd<segment.y){

@@ -156,7 +156,8 @@ try{
       full+=rho*ds;until=t0+voxelEmptyDistance(p+d*t0,sampleFootprint);
       if(t1<=until)skipped+=1.;else fast+=rho*ds;}
     out_FragColor=vec4(abs(exp(-full)-exp(-fast))*100.,skipped/96.,0,1);}`;
-  const skipParameters:Record<string,number>[]=[{}, {u_seed:971,u_windAngle:.013,u_evolution:7}];
+  const skipParameters:Record<string,number>[]=[{}, {u_seed:971,u_windAngle:.013,u_evolution:7},
+    {u_windSpeed:0},{u_seed:37,u_windSpeed:120,u_windAngle:.013,u_evolution:7}];
   const skipRuns=skipParameters.map(p=>run(common+density,skipFixture,p));
   let skipError=0,skipped=0;for(const bytes of skipRuns)for(let i=0;i<512;i++){skipError=Math.max(skipError,bytes[i*4]/255/100);skipped+=bytes[i*4+1]/255*96;}
   const voxelRepeat=run(common+density,`void main(){float i=mod(floor(gl_FragCoord.x),256.);vec3 p=vec3(i*.19-6000.,sin(i*.3)*20.,cos(i*.7)*35.);
@@ -202,7 +203,7 @@ try{
     {name:'high cloud is sparse, optically thin and independently disableable',pass:iceCount>10&&iceCount<400&&iceMax<.66&&noIce.every((v,i)=>i%4===3||v===0),iceCount,iceMax},
     {name:'high wind moves its own cloud field',pass:iceMotion/512>.0001,rms:Math.sqrt(iceMotion/512)},
     {name:'both cloud layers receive phase-dependent moonlight',pass:moonDelta.every(v=>v>.005)&&moonNew.every((v,i)=>v===moonOff[i]),moonDelta},
-    {name:'conservative voxel skips preserve optical depth across mips and motion',pass:skipError<.0001&&skipped>0,maxTransmissionError:skipError,skippedIntervals:Math.round(skipped)},
+    {name:'combined body disables residual-only EDT skips and preserves L/T with skipping enabled',pass:skipError<.0001&&skipped===0,maxTransmissionError:skipError,skippedIntervals:Math.round(skipped),reason:'The connected body can occupy the old voxel empty cells; the residual EDT does not bound the full medium.'},
     {name:'combined voxel morphology does not repeat at 12 km',pass:voxelRms>.08,rms:voxelRms},
     {name:'statistical far volume vanishes for zero coverage and zero density',pass:farVacuum.every(b=>b.every((v,i)=>i%4===3||v===0))},
     {name:'segment blend endpoints dispatch to the matching density representation',pass:transition.every((v,i)=>i%4===3||v<=1),maxDensityDelta:Math.max(...transition.filter((_,i)=>i%4===0))/255},

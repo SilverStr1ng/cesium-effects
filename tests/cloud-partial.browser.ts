@@ -2,6 +2,7 @@ import common from '../src/effects/hillaire-atmosphere/shaders/common.glsl?raw';
 import density from '../src/effects/global-clouds/shaders/density.glsl?raw';
 import voxel from '../src/effects/global-clouds/shaders/voxel.glsl?raw';
 import {cloudProbe} from './cloudProbe';
+import {connectedBodyReference} from './connectedBodyReference';
 
 // Deliberately red-capable diagnostic. A frozen local column separates clipped
 // profile statistics from spatial filtering and changing weather along a ray.
@@ -21,15 +22,14 @@ try{
       T*=Q/previous;previous=Q;
     }
     out_FragColor=vec4(1.-T,0,fraction,farTop);}`;
-  const reference=header+`void main(){vec3 n,east,north;setupColumn(n,east,north);
+  const reference=header+connectedBodyReference+`void main(){vec3 n,east,north;setupColumn(n,east,north);
     vec2 uv=gl_FragCoord.xy/u_grid-.5;vec3 p=normalize(n*(Rg+u_base)+u_filterF*(east*uv.x+north*uv.y))*(Rg+u_base);
     vec2 w=cloudWeather(p,u_filterF);if(w.x<=0.){out_FragColor=vec4(0);return;}
-    vec3 q=advect(p);float cell=cellular(q+cloudWarp(q)+u_seed*.43,29.713,.04).r;
-    float threshold=mix(.76,.38,w.x),cluster=smoothstep(threshold-.035,threshold+.085,cell);
+    vec3 q=advect(p);float cluster=referenceCluster(q,w.x,w.y);vec3 body=referenceBody(q,w.x,w.y,cluster);
     // Integrate the SAME local profile fraction in each column BEFORE taking
     // E[T]. This reference never calls farCloudDensity or prepareFarColumns.
     float scale=u_density*u_thickness/3.8*cluster*smoothstep(0.,.2,w.x)*remaining(u_h0);
-    out_FragColor=materialOptics((1.-w.x)*.22+(1.-cluster)*.3,w.y,scale);}`;
+    vec4 m=materialOptics((1.-w.x)*.22+(1.-cluster)*.3,w.y,scale*.12*smoothstep(0.,.5,body.x));m.r=1.-exp(-body.x*u_density*remaining(u_h0))*(1.-m.r);out_FragColor=m;}`;
   const mean=(p:Float32Array|Uint8Array)=>{let sum=0;for(let i=0;i<p.length;i+=4)sum+=p[i];return sum/(p.length/4);};
   for(const patch of [0,3,5,7])for(const h0 of [0,.2,.5,.8]){
     const uniforms={...gpu.uniforms,u_patch:patch,u_filterF:28,u_h0:h0};

@@ -22,6 +22,7 @@ uniform float u_highFilterGrid;
 vec4 cloudWork=vec4(0); // distribution builds, spatial taps, table queries, legacy cache hits
 vec3 cloudCacheMiss=vec3(0); // anchor movement, footprint, slant
 vec2 cloudBranchWork=vec2(0); // resolved/statistical segment calls
+vec3 cloudDensityWork=vec3(0); // near density calls, local body queries, opaque exits
 #endif
 int cloudLayer=0;
 float cloudSlant=1.;
@@ -60,6 +61,57 @@ vec4 cellular(vec3 q,float scale,float footprint){
 vec3 cloudWarp(vec3 q){
     vec3 warp=cellular(q,71.3,.01).rga;
     return (warp-.5)*3.4;
+}
+// Shared world envelope for resolved voxels and statistical child columns.
+// A smooth signed field connects banks; cellular distance alone isolates each
+// peak into similarly spaced islands. Cumulus keeps more local lobes than the
+// sheet types. The two fetches also supply the continuous position warp.
+float cloudCluster(vec3 column,float cover,float type){
+    column+=vec3(.20,.13,.07)*u_evolution;
+    vec4 bank=cellular(column,213.9,.04);
+    vec4 lobes=cellular(column+(bank.rga-.5)*11.4+u_seed*.43,71.3,.04);
+    float cell=mix(lobes.a,bank.a,mix(.62,.45,type));
+    float threshold=mix(.61,.36,cover)-.035*(1.-type);
+    return smoothstep(threshold-.05,threshold+.085,cell);
+}
+// The connected body has its own WORLD support, independent of empty voxels.
+// R = vertical tau (density=1), G/B = bottom/top fractions of the main shell.
+// The 213.9/71.3 km envelope domains have 42.78/14.26 km A lattices.
+// Support combines 14.26 and 4.78 km lattices; the latter sculpts lobes,
+// rather than independently cutting every large body into small islands.
+// Both ends sample these same local boundaries before integrating L/T.
+vec3 cloudBody(vec3 column,float cover,float type,float cluster){
+    column+=vec3(.81,.27,.13)*u_evolution;
+    #ifdef CLOUD_DIAGNOSTICS
+    cloudDensityWork.y+=1.;
+    #endif
+    vec4 shape=cellular(column+u_seed*.19,23.9,.04);
+    float bankShape=cellular(column+u_seed*.19,71.3,.04).a;
+    float support=mix(bankShape,shape.a,mix(.25,.45,type));
+    // The middle scale determines genuine through-holes as well as the top;
+    // even a saturated synoptic envelope is not a uniform ceiling. Sheet
+    // types connect at lower thresholds; cumulus retains separated tall heads.
+    float strength=smoothstep(mix(.36,.42,type),mix(.63,.70,type),support+.1*(cluster-.5));
+    float bottom=.015+.045*shape.a;
+    // Independent 3/7, 7/13 and 13/23-cycle lobes sculpt the roof;
+    // the five-cycle A field still determines connected support and holes.
+    vec2 roof=cellular(column+u_seed*.61,4.7,.04).rg;
+    vec2 cap=sqrt(max(vec2(0),1.-pow(clamp((1.-roof)/.85,0.,1.),vec2(2))));
+    float billow=dot(shape.rgb-vec3(shape.a),vec3(.35,.2,.1))+dot(cap-.75,vec2(.35,.15));
+    float rise=clamp(mix(.38,.72,type)+mix(.20,.28,type)*shape.a+billow,.15,1.12);
+    float top=bottom+cloudTypeTop(type)*rise*sqrt(max(0.,cluster*strength));
+    top=min(1.,max(bottom+.001,top));
+    float tau=9.*u_thickness*mix(.16,.30,type)*pow(cluster,1.6)*strength*smoothstep(0.,.2,cover)*mix(.65,1.,shape.a);
+    return vec3(tau,bottom,top);
+}
+const float CLOUD_RESIDUAL_WEIGHT=.12;
+vec3 resolvedBody=vec3(0);
+float resolvedBodyRho=0.;
+float columnProfile(float h);
+float bodyProfileDensity(vec3 body,vec3 p){
+    if(body.x<=0.||body.z<=body.y)return 0.;
+    float height=u_thickness*(body.z-body.y),h=(length(p)-Rg-u_base-u_thickness*body.y)/height;
+    return body.x*u_density*columnProfile(h)/height;
 }
 float lobes(vec3 q,float footprint){
     vec4 a=cellular(q+u_seed*.23,7.83,footprint);
@@ -107,12 +159,21 @@ float columnCdf(float h){h=clamp(h,0.,1.);return h*h*(6.-8.*h+3.*h*h);}
 // Gauss integration on the finite spherical child shell. The lower shell is
 // already clipped by the caller; this also clips each child's distinct top.
 // Four points per half avoid a plane-parallel 1/mu singularity at tangency.
-float columnPathProfile(vec3 origin,vec3 direction,vec2 path,float top){
-    float height=u_thickness*top;
-    vec2 outer=sphere(origin,direction,Rg+u_base+height);
+float bodyPathProfile(vec3 origin,vec3 direction,vec2 path,float bottom,float top){
+    if(top<=bottom||path.y<=path.x)return 0.;
+    float base=u_base+u_thickness*bottom,height=u_thickness*(top-bottom);
+    // On a short steep leg the clamped profile CDF clips both boundaries
+    // directly. Use the same endpoint-mean radial approximation as below,
+    // before doing sphere intersections and splitting the shell. Curvature
+    // error is checked against the independent spherical path quadrature.
+    vec3 begin=origin+direction*path.x,finish=origin+direction*path.y;
+    float rb=length(begin),re=length(finish),mu=dot(begin+finish,direction)/(rb+re);
+    if(abs(mu)>.25&&path.y-path.x<20.)
+      return abs(columnCdf((re-Rg-base)/height)-columnCdf((rb-Rg-base)/height))/abs(mu);
+    vec2 outer=sphere(origin,direction,Rg+base+height);
     path=vec2(max(path.x,outer.x),min(path.y,outer.y));
     if(path.y<=path.x)return 0.;
-    vec2 inner=sphere(origin,direction,Rg+u_base);
+    vec2 inner=sphere(origin,direction,Rg+base);
     float sum=0.;
     for(int section=0;section<int(u_columnSections);section++){
       vec2 part=section==0?vec2(path.x,min(path.y,inner.x)):vec2(max(path.x,inner.y),path.y);
@@ -125,59 +186,86 @@ float columnPathProfile(vec3 origin,vec3 direction,vec2 path,float top){
       // identity avoids subtracting two almost equal planetary radii for mu.
       // Grazing/long paths retain spherical quadrature and are tested separately.
       if(abs(meanMu)>.25&&part.y-part.x<20.){
-        sum+=abs(columnCdf((r1-Rg-u_base)/height)-columnCdf((r0-Rg-u_base)/height))/abs(meanMu);continue;
+        sum+=abs(columnCdf((r1-Rg-base)/height)-columnCdf((r0-Rg-base)/height))/abs(meanMu);continue;
       }
       float mid=(part.x+part.y)*.5,radius=(part.y-part.x)*.5;
       for(int j=0;j<int(u_columnQuadrature);j++){
         float x=j==0?-.8611363116:j==1?-.3399810436:j==2?.3399810436:.8611363116;
         float w=j==0||j==3?.3478548451:.6521451549;
-        float h=(length(origin+direction*(mid+radius*x))-Rg-u_base)/height;
+        float h=(length(origin+direction*(mid+radius*x))-Rg-base)/height;
         sum+=w*columnProfile(h)*radius/height;
       }
     }
     return sum;
 }
-void accumulateColumnResponse(float cut,float type,float scale,float weight){
+float columnPathProfile(vec3 origin,vec3 direction,vec2 path,float top){return bodyPathProfile(origin,direction,path,0.,top);}
+// A response bin can straddle a child's cloud top. Sampling light at the bin's
+// geometric midpoint then lights absorbed photons from outside that cloud.
+// Locate its median absorbed optical depth in the actual local body profile.
+// Only monotone radial legs use the inverse CDF; tangent-crossing bins retain
+// their finite-path midpoint (a separately measured long-path approximation).
+vec3 bodyResponsePoint(float start,float end,vec3 body,float deltaTau){
+    vec3 first=farPathOrigin+farPathDirection*start,last=farPathOrigin+farPathDirection*end;
+    if(deltaTau<.00001||dot(first,farPathDirection)*dot(last,farPathDirection)<=0.)return (first+last)*.5;
+    float height=u_thickness*(body.z-body.y),base=Rg+u_base+u_thickness*body.y;
+    float a=columnCdf((length(first)-base)/height),b=columnCdf((length(last)-base)/height);
+    float median=deltaTau<.001?.5:-log(.5*(1.+exp(-deltaTau)))/deltaTau;
+    float target=mix(a,b,median),lo=0.,hi=1.;
+    for(int j=0;j<10;j++){float h=(lo+hi)*.5;if(columnCdf(h)<target)lo=h;else hi=h;}
+    vec2 roots=sphere(farPathOrigin,farPathDirection,base+height*(lo+hi)*.5);
+    float t=abs(roots.x-(start+end)*.5)<abs(roots.y-(start+end)*.5)?roots.x:roots.y;
+    return farPathOrigin+farPathDirection*clamp(t,start,end);
+}
+void accumulateColumnResponse(float cut,float type,float scale,float weight,vec3 body){
     // Positive, correlated depth components, fetched ONCE per spatial column.
     // RG encodes log(1+tau)/log(65) in 16 bits; B is population / 256;
     // A is mean interior. Zero-depth population is implicit and remains clear.
     // Do not confuse this probability with CloudOptics.A = P(T < .9).
-    vec3 component[8];float population=0.;
+    vec3 component[9];float population=0.;
     for(int k=0;k<int(u_columnComponents);k++){
       vec4 value=texture(u_cloudComponents,vec3((vec2(clamp(cut/.52,0.,1.),type)*31.+.5)/32.,(float(k)+.5)/8.));
-      float tau=(exp((value.r*65280.+value.g*255.)/65535.*log(65.))-1.)*scale;
+      float tau=(exp((value.r*65280.+value.g*255.)/65535.*log(65.))-1.)*scale*CLOUD_RESIDUAL_WEIGHT*smoothstep(0.,.5,body.x);
       component[k]=vec3(tau,value.b*255./256.,value.a);population+=component[k].y;
       #ifdef CLOUD_DIAGNOSTICS
       cloudWork.z+=1.;
       #endif
     }
-    if(population<=0.)return;
-    float top=cloudTypeTop(type),previous=0.;
+    // The old voxel-empty population can now contain the independent body.
+    component[8]=vec3(0,max(0.,1.-population),0);
+    float top=cloudTypeTop(type),previous=0.,previousBody=0.;
+    float interiorSum[9];for(int k=0;k<9;k++)interiorSum[k]=0.;
     for(int i=1;i<=farResponseCount;i++){
       float end=farNode(i),start=farNode(i-1);
       float cumulative=farCommonMode?farCommonFraction*float(i)/float(farResponseCount):columnPathProfile(farPathOrigin,farPathDirection,vec2(farPath.x,end),top);
-      vec3 p=farPathOrigin+farPathDirection*((start+end)*.5);
+      float bodyCumulative=body.x*u_density*(farCommonMode?cloudSlant*cumulative:bodyPathProfile(farPathOrigin,farPathDirection,vec2(farPath.x,end),body.y,body.z));
+      vec3 p=farCommonMode?farPathOrigin+farPathDirection*((start+end)*.5):bodyResponsePoint(start,end,body,bodyCumulative-previousBody);
       bool sun=farSunActive&&!planetOccludes(p,farSunDirection),moon=farMoonActive&&dot(normalize(p),farSunDirection)<.04&&!planetOccludes(p,farMoonDirection);
       float sunPath=sun?columnPathProfile(p,farSunDirection,vec2(0,1.5),top):0.,moonPath=moon?columnPathProfile(p,farMoonDirection,vec2(0,1.5),top):0.;
-      for(int k=0;k<int(u_columnComponents);k++){
-        vec3 c=component[k];float T=exp(-c.x*cumulative),absorbed=max(0.,exp(-c.x*previous)-T),w=weight*c.y;
-        farResponse[i]+=w*vec4(1.-T,(1.-T)*c.z,c.x*cumulative>-log(.9)?1.:0.,c.x*cumulative);
+      float bodySun=sun?body.x*u_density*bodyPathProfile(p,farSunDirection,vec2(0,1.5),body.y,body.z):0.;
+      float bodyMoon=moon?body.x*u_density*bodyPathProfile(p,farMoonDirection,vec2(0,1.5),body.y,body.z):0.;
+      float depth=max(0.,min(length(p)-Rg-u_base-u_thickness*body.y,Rg+u_base+u_thickness*body.z-length(p)));
+      float bodyRho=bodyProfileDensity(body,p),inside=(1.-exp(-3.*depth))*smoothstep(.1,3.,bodyRho);
+      for(int k=0;k<=int(u_columnComponents);k++){
+        vec3 c=component[k];float tau=c.x*cumulative+bodyCumulative,T=exp(-tau),absorbed=max(0.,exp(-c.x*previous-previousBody)-T),w=weight*c.y;
+        float interior=mix(c.z,inside,bodyRho/(bodyRho+c.x*columnProfile((length(p)-Rg-u_base)/(u_thickness*top))/(u_thickness*top)+.00001));
+        interiorSum[k]+=absorbed*interior;
+        farResponse[i]+=w*vec4(1.-T,interiorSum[k],tau>-log(.9)?1.:0.,tau);
         // Use the resolved voxel model's scattering-order probability and
         // forward extinction for EACH component before averaging its L/T.
         // Omitting these made the far branch brighter when quality/LOD changed.
-        float probability=mix(.18,1.,c.z);
+        float probability=mix(.18,1.,interior);
         if(sun){
           float forward=smoothstep(.35,.95,dot(farPathDirection,farSunDirection));
-          vec3 extinction=vec3(1.,mix(.55,.32,forward*c.z),mix(.28,.12,forward*c.z));
-          farSunResponse[i-1]+=w*absorbed*vec3(1.,probability,probability)*exp(-c.x*sunPath*extinction);
+          vec3 extinction=vec3(1.,mix(.55,.32,forward*interior),mix(.28,.12,forward*interior));
+          farSunResponse[i-1]+=w*absorbed*vec3(1.,probability,probability)*exp(-(c.x*sunPath+bodySun)*extinction);
         }
         if(moon){
           float forward=smoothstep(.35,.95,dot(farPathDirection,farMoonDirection));
-          vec3 extinction=vec3(1.,mix(.55,.32,forward*c.z),mix(.28,.12,forward*c.z));
-          farMoonResponse[i-1]+=w*absorbed*vec3(1.,probability,probability)*exp(-c.x*moonPath*extinction);
+          vec3 extinction=vec3(1.,mix(.55,.32,forward*interior),mix(.28,.12,forward*interior));
+          farMoonResponse[i-1]+=w*absorbed*vec3(1.,probability,probability)*exp(-(c.x*moonPath+bodyMoon)*extinction);
         }
       }
-      previous=cumulative;
+      previous=cumulative;previousBody=bodyCumulative;
     }
 }
 // Midpoint rules 4, 12, 36 are nested. Weights blend completed optical moments,
@@ -272,15 +360,18 @@ void prepareFarColumns(vec3 p,float footprint){
         float top=cloudTypeTop(weather.y);farTop+=top*weight;
         if(weather.x<=0.)continue;
         vec3 q=advect(samplePoint);
-        float cell=cellular(q+cloudWarp(q)+u_seed*.43,29.713,.04).r;
-        float threshold=mix(.76,.38,weather.x),cluster=smoothstep(threshold-.035,threshold+.085,cell);
+        float cluster=cloudCluster(q,weather.x,weather.y);
         if(cluster>0.){
-        float scale=u_density*u_thickness/3.8*cloudSlant*cluster*smoothstep(0.,.2,weather.x)*farCommonFraction;
+        vec3 body=cloudBody(q,weather.x,weather.y,cluster);
         if(farBuildingResponse){
-          accumulateColumnResponse((1.-weather.x)*.22+(1.-cluster)*.3,weather.y,
-            u_density*u_thickness/3.8*cluster*smoothstep(0.,.2,weather.x)*(farCommonMode?cloudSlant:1.),weight);
+          // Keep the loop structure intact: an inner continue lost the second
+          // anisotropy rule on the tested ANGLE driver near its 1.25 endpoint.
+          if(body.x>0.)accumulateColumnResponse((1.-weather.x)*.22+(1.-cluster)*.3,weather.y,u_density*u_thickness/3.8*cluster*smoothstep(0.,.2,weather.x)*(farCommonMode?cloudSlant:1.),weight,body);
         }else{
+          float bodyTau=body.x*u_density*cloudSlant*farCommonFraction;
+          float scale=u_density*u_thickness/3.8*cloudSlant*cluster*smoothstep(0.,.2,weather.x)*farCommonFraction*CLOUD_RESIDUAL_WEIGHT*smoothstep(0.,.5,body.x);
           vec4 m=materialOptics((1.-weather.x)*.22+(1.-cluster)*.3,weather.y,scale);
+          m.r=1.-exp(-bodyTau)*(1.-m.r);m.g+=bodyTau;
           farMoments+=vec4(m.r,m.g,m.b*m.r,m.a)*weight;
         }
         }
@@ -347,24 +438,17 @@ float farCloudLightDepth(vec3 p,vec3 light,float footprint){
     float conditionalDepth=farMoments.g/max(.02,farMoments.a)/max(1.,cloudSlant);
     return min(32.,conditionalDepth*fraction);
 }
-float lowCloudDensity(vec3 p,float footprint,bool coarse){
+float residualCloudMaterial(vec3 p,float footprint,bool coarse,vec2 weather,float cluster){
     float h=(length(p)-Rg-u_base)/u_thickness;
     if(h<=0.||h>=1.||u_coverage<=0.)return 0.;
     vec3 q=advect(p);
-    vec4 w=textureLod(u_weather,weatherUV(q),0.);
-    float type=cloudTypeValue(w.g),top=cloudTypeTop(type);
+    float type=weather.y,top=cloudTypeTop(type);
     h/=top;
     if(h>=1.)return 0.;
-    float cover=clamp((w.r+u_coverage-1.)/max(.05,u_coverage),0.,1.);
-    if(cover<=0.)return 0.;
-    cover=clamp(cover+(w.b-.5)*.7+(w.a-.5)*1.3,0.,1.);
+    float cover=weather.x;
     if(cover<=0.)return 0.;
     // A vertically coherent mesoscale mask creates genuine sky windows. A
     // different random gap at every altitude still accumulates into overcast.
-    vec3 column=normalize(q)*(Rg+u_base);
-    float cell=cellular(column+cloudWarp(column)+u_seed*.43,29.713,max(footprint,.04)).r;
-    float threshold=mix(.76,.38,cover);
-    float cluster=smoothstep(threshold-.035,threshold+.085,cell);
     if(cluster<=.001)return 0.;
     if(u_voxelReady){
         vec4 volume=voxelShape(p,footprint);
@@ -377,7 +461,7 @@ float lowCloudDensity(vec3 p,float footprint,bool coarse){
             float detail=mix(wisps,billows,volume.a);
             detail=mix(detail,mix(1.-pow(folded,3.),folded*folded,volume.a),1.-smoothstep(.015,.12,footprint));
             // Erosion only removes material, preserving the baked distance bound.
-            field-=(1.-detail)*u_detail*.28*(1.-smoothstep(.15,.8,footprint));
+            field-=(1.-detail)*u_detail*.28*(1.-smoothstep(.06,.45,field))*(1.-smoothstep(.15,.8,footprint));
         }
         float body=smoothstep(0.,.32+min(.15,footprint*.2),field);
         return body*cluster*smoothstep(0.,.2,cover)*smoothstep(0.,.045,h)*(1.-smoothstep(.9,1.,h))*9.*u_density;
@@ -405,6 +489,37 @@ float lowCloudDensity(vec3 p,float footprint,bool coarse){
     float boundary=.10+min(.16,footprint*.3);
     float body=smoothstep(0.,boundary,field);
     return body*smoothstep(0.,.045,h)*(1.-smoothstep(.92,1.,h))*7.*u_density;
+}
+// Shadow taps must use THEIR column's support. Do not mutate resolvedBody:
+// it belongs to the observation sample and is still needed by its lighting.
+float residualCloudDensity(vec3 p,float footprint,bool coarse){
+    float h=(length(p)-Rg-u_base)/u_thickness;
+    if(h<=0.||h>=1.||u_coverage<=0.)return 0.;
+    vec2 weather=cloudWeather(p,footprint);if(weather.x<=0.)return 0.;
+    vec3 column=advect(normalize(p)*(Rg+u_base));
+    float cluster=cloudCluster(column,weather.x,weather.y);if(cluster<=.001)return 0.;
+    vec3 body=cloudBody(column,weather.x,weather.y,cluster);
+    if(body.x<=0.)return 0.;
+    return CLOUD_RESIDUAL_WEIGHT*smoothstep(0.,.5,body.x)*residualCloudMaterial(p,footprint,coarse,weather,cluster);
+}
+float lowCloudDensity(vec3 p,float footprint,bool coarse){
+    #ifdef CLOUD_DIAGNOSTICS
+    cloudDensityWork.x+=1.;
+    #endif
+    resolvedBody=vec3(0);resolvedBodyRho=0.;
+    float h=(length(p)-Rg-u_base)/u_thickness;
+    if(h<=0.||h>=1.||u_coverage<=0.)return 0.;
+    vec2 weather=cloudWeather(p,footprint);if(weather.x<=0.)return 0.;
+    vec3 column=advect(normalize(p)*(Rg+u_base));
+    float cluster=cloudCluster(column,weather.x,weather.y);if(cluster<=.001)return 0.;
+    resolvedBody=cloudBody(column,weather.x,weather.y,cluster);
+    if(resolvedBody.x<=0.)return 0.;
+    resolvedBodyRho=bodyProfileDensity(resolvedBody,p);
+    // The explicit column support gates the voxel population too. It may
+    // provide 3D caps above the connected roof, but cannot put independent
+    // bricks into a world column whose main body has a genuine through-hole.
+    float gate=smoothstep(0.,.5,resolvedBody.x);
+    return resolvedBodyRho+CLOUD_RESIDUAL_WEIGHT*gate*residualCloudMaterial(p,footprint,coarse,weather,cluster);
 }
 
 // A smooth spherical streamfunction organizes curved fibres. Its surface curl

@@ -1,7 +1,7 @@
 import {createCumulusNoise} from '../src/effects/global-clouds/CumulusNoise';
 import {createVoxelCloudField,sampleVolume} from '../src/effects/global-clouds/VoxelCloudField';
 import {createCloudOpticsData,CLOUD_COMPONENTS} from '../src/effects/global-clouds/CloudOptics';
-import {writeFileSync} from 'node:fs';
+import {mkdirSync,writeFileSync} from 'node:fs';
 const noise=createCumulusNoise().bytes,voxels=createVoxelCloudField().bytes,rows=[];
 for(const [detail,thickness] of [[.55,3.8],[0,3.8],[1,3.8],[.55,1],[.55,8]]){
   const {optics,components}=createCloudOpticsData(voxels,noise,{detail,thickness});
@@ -20,5 +20,5 @@ for(const [detail,thickness] of [[.55,3.8],[0,3.8],[1,3.8],[.55,1],[.55,8]]){
   }
 }
 const failures=rows.filter(r=>Math.abs(r.error)>.02),report={passed:failures.length===0,maxError:Math.max(...rows.map(r=>Math.abs(r.error))),failures,rows};
-writeFileSync('artifacts/stage6/components-cpu.json',JSON.stringify(report,null,2));console.log(JSON.stringify({passed:report.passed,maxError:report.maxError,failures},null,2));
+mkdirSync('artifacts/stage7-correction/data',{recursive:true});writeFileSync('artifacts/stage7-correction/data/components-cpu.json',JSON.stringify(report,null,2));console.log(JSON.stringify({passed:report.passed,maxError:report.maxError,failures},null,2));
 if(failures.length)process.exitCode=1;

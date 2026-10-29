@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {filteredMean,spatialMean} from './farColumnReference';
+import {filteredMean,spatialMean} from './fixtures/stage6/farColumnReference';
 
 const counterexamples=[
   {patch:5,footprint:28,mu:.25,grid:12,old:.432947019,reference:.377614323},

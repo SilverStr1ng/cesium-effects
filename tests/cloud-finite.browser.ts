@@ -5,6 +5,7 @@ import atmosphere from '../src/effects/hillaire-atmosphere/shaders/integrate.gls
 import environment from '../src/effects/hillaire-atmosphere/shaders/sky-irradiance-sample.glsl?raw';
 import lighting from '../src/effects/global-clouds/shaders/droplet-lighting.glsl?raw';
 import {cloudProbe} from './cloudProbe';
+import {connectedBodyReference} from './connectedBodyReference';
 const output=document.querySelector('#result')!;
 try{
   const gpu=cloudProbe(document.querySelector('canvas')!),checks=[],responseChecks=[];
@@ -27,11 +28,10 @@ try{
     prepareFarResponse(origin,d,path,u_F,int(u_nodes),normalize(vec3(-.2,-.8,.56)),vec3(0,0,1),false);
     float T=1.,previous=1.;for(int i=1;i<=farResponseCount;i++){float q=1.-farResponse[i].r;T*=q/max(1e-7,previous);previous=q;}
     out_FragColor=vec4(1.-T,farResponse[farResponseCount].r,path.y-path.x,1);}`;
-  const reference=common+density+voxel+setup+`void main(){vec3 origin,d,column,a,b;vec2 path;setup(origin,d,path,column,a,b);
+  const reference=common+density+voxel+setup+connectedBodyReference+`void main(){vec3 origin,d,column,a,b;vec2 path;setup(origin,d,path,column,a,b);
     vec2 uv=gl_FragCoord.xy/u_grid-.5;vec3 p=normalize(column+u_F*(a*uv.x+b*uv.y))*(Rg+u_base);
     vec2 w=cloudWeather(p,u_F);if(w.x<=0.){out_FragColor=vec4(0);return;}
-    vec3 q=advect(p);float cell=cellular(q+cloudWarp(q)+u_seed*.43,29.713,.04).r;
-    float threshold=mix(.76,.38,w.x),cluster=smoothstep(threshold-.035,threshold+.085,cell),top=cloudTypeTop(w.y);
+    vec3 q=advect(p);float cluster=referenceCluster(q,w.x,w.y),top=cloudTypeTop(w.y);vec3 body=referenceBody(q,w.x,w.y,cluster);
     // Independent midpoint path integral, never columnPathProfile/response.
     vec2 topHit=sphere(origin,d,Rg+u_base+u_thickness*top);
     float start=max(path.x,topHit.x),end=min(path.y,topHit.y),ds=max(0.,end-start)/u_referenceSteps,fraction=0.;
@@ -40,7 +40,14 @@ try{
       if(h>0.&&h<1.)fraction+=12.*h*(1.-h)*(1.-h)*ds/(u_thickness*top);
     }
     float scale=u_density*u_thickness/3.8*cluster*smoothstep(0.,.2,w.x)*fraction;
-    out_FragColor=materialOptics((1.-w.x)*.22+(1.-cluster)*.3,w.y,scale);}`;
+    vec4 m;
+    vec2 bodyHit=sphere(origin,d,Rg+u_base+u_thickness*body.z);
+    start=max(path.x,bodyHit.x);end=min(path.y,bodyHit.y);ds=max(0.,end-start)/u_referenceSteps;float bodyFraction=0.;
+    for(float i=0.;i<u_referenceSteps;i++){
+      float h=(length(origin+d*(start+(i+.5)*ds))-Rg-u_base-u_thickness*body.y)/(u_thickness*(body.z-body.y));
+      if(h>0.&&h<1.)bodyFraction+=12.*h*(1.-h)*(1.-h)*ds/(u_thickness*(body.z-body.y));
+    }
+    m=materialOptics((1.-w.x)*.22+(1.-cluster)*.3,w.y,scale*.12*smoothstep(0.,.5,body.x));m.r=1.-exp(-body.x*u_density*bodyFraction)*(1.-m.r);out_FragColor=m;}`;
   const diagnostic=common+density+voxel+setup+`void main(){vec3 origin,d,column,a,b;vec2 path;setup(origin,d,path,column,a,b);
     out_FragColor=vec4(columnPathProfile(origin,d,path,.26),columnPathProfile(origin,d,path,.58),columnPathProfile(origin,d,path,.8),columnPathProfile(origin,d,path,1.));}`;
   const full=common+density+voxel+setup+`void main(){vec3 origin,d,column,a,b;vec2 path;setup(origin,d,path,column,a,b);prepareFarColumns(column,u_F);out_FragColor=vec4(farMoments.r,farTop,cloudSlant,farMoments.g);}`;

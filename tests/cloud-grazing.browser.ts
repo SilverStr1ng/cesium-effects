@@ -3,6 +3,7 @@ import density from '../src/effects/global-clouds/shaders/density.glsl?raw';
 import voxel from '../src/effects/global-clouds/shaders/voxel.glsl?raw';
 import lighting from '../src/effects/global-clouds/shaders/droplet-lighting.glsl?raw';
 import {cloudProbe} from './cloudProbe';
+import {connectedBodyReference} from './connectedBodyReference';
 
 const output=document.querySelector('#result')!;
 const checks:{name:string;pass:boolean;[key:string]:unknown}[]=[];
@@ -21,14 +22,14 @@ try{
     }`;
   // Reference samples the same nonlinear cloud/material law independently of
   // prepareFarColumns and its budget. Each pixel is one unfiltered subcolumn.
-  const reference=`void main(){vec3 column,a,b;setupPatch(column,a,b);
+  const reference=connectedBodyReference+`void main(){vec3 column,a,b;setupPatch(column,a,b);
     vec2 uv=gl_FragCoord.xy/u_referenceGrid-.5;
     vec3 p=normalize(column+u_filterF*(a*uv.x+b*uv.y))*(Rg+u_base);
     vec2 w=cloudWeather(p,u_filterF);if(w.x<=0.){out_FragColor=vec4(0);return;}
-    vec3 q=advect(p);float cell=cellular(q+cloudWarp(q)+u_seed*.43,29.713,.04).r;
-    float threshold=mix(.76,.38,w.x),cluster=smoothstep(threshold-.035,threshold+.085,cell);
+    vec3 q=advect(p);float cluster=referenceCluster(q,w.x,w.y);vec3 body=referenceBody(q,w.x,w.y,cluster);
     float scale=u_density*u_thickness/3.8*cloudSlant*cluster*smoothstep(0.,.2,w.x);
-    vec4 m=materialOptics((1.-w.x)*.22+(1.-cluster)*.3,w.y,scale);
+    vec4 m;
+    float bodyTau=body.x*u_density*cloudSlant;m=materialOptics((1.-w.x)*.22+(1.-cluster)*.3,w.y,scale*.12*smoothstep(0.,.5,body.x));m.r=1.-exp(-bodyTau)*(1.-m.r);m.g+=bodyTau;
     out_FragColor=vec4(m.r,m.g,m.b*m.r,m.a);}`;
   const production='void main(){vec3 p,a,b;setupPatch(p,a,b);prepareFarColumns(p,u_filterF);out_FragColor=farMoments;}';
   const mean=(pixels:Float32Array|Uint8Array)=>Array.from({length:4},(_,c)=>{let sum=0;for(let i=c;i<pixels.length;i+=4)sum+=pixels[i];return sum/(pixels.length/4);});

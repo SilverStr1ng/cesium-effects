@@ -99,7 +99,7 @@ export class GlobalCloudEffect implements SceneEffect {
     return {u_weather:()=>this.weather!,u_noise:()=>this.noise!,u_base:()=>this.parameters.base,
       u_thickness:()=>this.assets?.textures.optics?this.assets.material.thickness:this.parameters.thickness,u_coverage:()=>this.parameters.coverage,u_density:()=>this.parameters.density,
       u_detail:()=>this.assets?.textures.optics?this.assets.material.detail:this.parameters.detail,u_seed:()=>this.weatherSeed,u_windAngle:()=>this.windAngle,
-      u_evolution:()=>this.evolution,u_windSpeed:()=>this.parameters.wind,u_sun:()=>this.sun,
+      u_evolution:()=>this.evolution,u_windSpeed:()=>this.assets?.textures.optics?(this.assets.material.wind??24):this.parameters.wind,u_sun:()=>this.sun,
       u_emptySceneDepth:()=>this.context?emptySceneDepth(this.context.viewer.scene):false,
       u_cloudType:()=>this.parameters.type,u_highCoverage:()=>this.parameters.highCoverage,
       u_highBase:()=>Math.max(this.parameters.highBase,this.parameters.base+(this.assets?.textures.optics?this.assets.material.thickness:this.parameters.thickness)+.5),u_highThickness:()=>this.parameters.highThickness,

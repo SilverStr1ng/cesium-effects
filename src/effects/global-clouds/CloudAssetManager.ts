@@ -51,7 +51,7 @@ export class CloudAssetManager {
     }).finally(()=>{metrics.readyWallMs=performance.now()-metrics.startedAt;if(epoch===this.epoch)this.load=undefined;});
   }
   private requestMaterial(material:CloudOpticsMaterial){
-    material={detail:material.detail,thickness:material.thickness};
+    material={detail:material.detail,thickness:material.thickness,wind:material.wind??24};
     const changed=opticsMaterialKey(material)!==opticsMaterialKey(this.desiredMaterial);
     this.desiredMaterial={...material};
     if(changed){this.materialEpoch++;this.materialLoad?.cancel();this.materialLoad=undefined;}
