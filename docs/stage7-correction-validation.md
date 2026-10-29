@@ -161,4 +161,6 @@ GPU数据必须按各轮initial/final固定条件、前台、有效query数、�
 
 提交后运行`node scripts/package-stage7-correction.mjs`，输出`artifacts/stage7-correction-evidence-<提交短哈希>/index.html`和同名ZIP；本地稳定入口为`artifacts/stage7-correction-latest.html`。HTML离线展示前后图、双向路径播放与全部关键帧；逐点JSON包含实际相机和材质状态。ZIP可由用户作为附件交付，未公开上传。最终回复另提供实际生成的完整路径链接。
 
+证据页采用相对图片资源、内嵌状态和脚本，不依赖在线JSON读取；localhost入口、前后图与路径末帧链接已实际打开。工具的浏览器安全策略拒绝`file://`导航，只允许`http/https`，所以**用户双击HTML的实际离线加载仍未验证**，不能将localhost验证改称离线验证通过。未改用其它浏览器表面绕过这一限制。
+
 **结论：实现、诊断和证据已保留到候选分支；地面与高空目标、全部近远精度及性能尚未同时达到，不提出合并。** 这不是阶段七完成声明。

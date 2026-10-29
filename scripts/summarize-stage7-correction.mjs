@@ -54,6 +54,6 @@ const summary={overallPassed:false,status:'Unaccepted Stage 7 correction candida
  storage:{assetVersion:10,opticsVersion:10,newTextureBytes:0,fixedAndWeatherBytes:16347328,retainedCpuBytes:9437184,materialCacheLimitBytes:655360},
  history:{reviewSpatialErrors:[.026382229,-.029950729],reviewHighL:.011578119,reviewFixedThickCoreCount:0,stage6RedGatesRetained:true},
  remaining:['Current world spatial quadrature exceeds .02 at listed points','Additional local pixel samples and a long oblique path remain inaccurate','Residual distribution omits local voxel phase','Near pixel-center material filtering is not exact E[L/T]','First LINK_STATUS still blocks','Cloud cost remains above prior targets','Fixed old geographical core/ground tests remain red under changed world'],
- unverified:['Real DEM/3D Tiles','Other GPU/drivers','Hardware clocks/power throttling','Strict per-pixel temporal error']};
+ unverified:['Real DEM/3D Tiles','Other GPU/drivers','Hardware clocks/power throttling','Strict per-pixel temporal error','Direct file:// evidence loading: browser tool permits only http/https; localhost loading verified']};
 write('summary',summary);
 console.log(JSON.stringify({pixelModel:summary.pixelModel.current,spatial:summary.spatial,overallPassed:false,gpuAudited:summary.gpu.audited},null,2));
