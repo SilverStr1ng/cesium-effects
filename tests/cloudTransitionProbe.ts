@@ -21,7 +21,11 @@ export async function cloudTransitionProbe(gpu:ReturnType<typeof cloudProbe>,hea
   .replace('vec3 cloudSource(vec3 light){return light;}','float u_pixelAngle;vec3 cloudSource(vec3 light){return u_sourceMode==1.?vec3(1):light;}')
   .replace('if(cloudLayer==0&&u_voxelReady)footprint=max(footprint,(t1-t0)/float(CLOUD_SUBSTEPS)*.35);','diagnosticScreen=max(diagnosticScreen,footprint);diagnosticStep=max(diagnosticStep,(t1-t0)/float(CLOUD_SUBSTEPS)*.35);if(cloudLayer==0&&u_voxelReady)footprint=max(footprint,(t1-t0)/float(CLOUD_SUBSTEPS)*.35);')
   .replace('rho=cloudLayer==0?lowCloudDensity(p,footprint,false):highCloudDensity(p,footprint);','debugMipA=-1.;debugMipB=-1.;rho=cloudLayer==0?lowCloudDensity(p,footprint,false):highCloudDensity(p,footprint);diagnosticMip=max(diagnosticMip,vec2(debugMipA,debugMipB));')
-  .replace('vec3 illumination(vec3 p,float rho,float footprint,CloudPhases phases){','vec3 illumination(vec3 p,float rho,float footprint,CloudPhases phases){if(u_sourceMode==2.)footprint=.02;');
+  .replaceAll('vec3 illumination(vec3 p,float rho,float footprint,CloudPhases phases){','vec3 illumination(vec3 p,float rho,float footprint,CloudPhases phases){if(u_sourceMode==2.)footprint=.02;')
+  .replace('vec3 resolvedIllumination(vec3 p,float rho,float footprint,CloudPhases phases){','vec3 resolvedIllumination(vec3 p,float rho,float footprint,CloudPhases phases){if(u_sourceMode==2.)footprint=.02;');
+ const responseNodes=Number(new URLSearchParams(location.search).get('nodes')??8);
+ if(![8,16].includes(responseNodes))throw new Error('Diagnostic nodes must be 8 or 16');
+ source=source.replace('const int FAR_RESPONSE_LIMIT=8;',`const int FAR_RESPONSE_LIMIT=${responseNodes};`);
  if(local){
   // Freeze weather/type/envelope while moving the voxel phase over the same
   // predefined eight world points. This is a diagnostic, never a product mode.
@@ -79,22 +83,24 @@ export async function cloudTransitionProbe(gpu:ReturnType<typeof cloudProbe>,hea
  const rows=[];
  const cases:Case[]=local?Array.from({length:8},(_,patch)=>({patch,footprint:2,mu:1,height:0})):
   [.35,.75,1.25,2,4].flatMap(footprint=>Array.from({length:8},(_,patch)=>({patch,footprint,mu:1,height:0})));
- const extended=!local&&new URLSearchParams(location.search).has('extended');
+ const query=new URLSearchParams(location.search),minimal=query.has('minimal');
+ const extended=!local&&query.has('extended');
  // Predetermined world points, never selected by whether the new model is
  // cloudy. Keep the original forty rows first and report occupancy separately.
  if(extended)cases.push(...[.75,2].flatMap(footprint=>Array.from({length:24},(_,i)=>({patch:i+8,footprint,mu:1,height:0}))));
  if(!local)cases.push({patch:3,footprint:.75,mu:.25,height:20},{patch:5,footprint:4,mu:.16,height:80},{patch:7,footprint:.35,mu:.08,height:3});
+ if(minimal&&!local)cases.splice(0,cases.length,{patch:28,footprint:2,mu:1,height:0},{patch:5,footprint:4,mu:.16,height:80});
  for(const c of cases){
   const near=draw(c,1,192,1),far=draw(c,1,192,2),auto=draw(c,1,192);
   const coarse=draw(c,32,96,0,1),reference=draw(c,64,192,0,1);
   const constantSource={near:draw(c,1,192,1,0,1),far:draw(c,1,192,2,0,1)};
-  const fineLightingNear=draw(c,1,192,1,0,2),metadata={near:draw(c,1,192,1,0,0,1,1).LT,far:draw(c,1,192,2,0,0,1,1).LT,fields:draw(c,1,192,0,0,0,1,2).LT,path:draw(c,1,192,0,0,0,1,3).LT,body:draw(c,1,192,0,0,0,1,4).LT};
-  rows.push({...c,near,far,auto,reference,coarse,constantSource,fineLightingNear,metadata,errors:{near:error(near.LT,reference.LT),far:error(far.LT,reference.LT),auto:error(auto.LT,reference.LT)},convergence:error(coarse.LT,reference.LT)});
+  const fineLightingNear=draw(c,1,192,1,0,2),fineLightingFar=draw(c,1,192,2,0,2),metadata={near:draw(c,1,192,1,0,0,1,1).LT,far:draw(c,1,192,2,0,0,1,1).LT,fields:draw(c,1,192,0,0,0,1,2).LT,path:draw(c,1,192,0,0,0,1,3).LT,body:draw(c,1,192,0,0,0,1,4).LT};
+  rows.push({...c,near,far,auto,reference,coarse,constantSource,fineLightingNear,fineLightingFar,metadata,errors:{near:error(near.LT,reference.LT),far:error(far.LT,reference.LT),auto:error(auto.LT,reference.LT)},convergence:error(coarse.LT,reference.LT)});
   output.textContent=JSON.stringify({complete:false,progress:rows.length,total:cases.length});await new Promise(r=>setTimeout(r,0));
  }
  const convergence=[],localPrototype=[];
  const worst=rows.filter(r=>r.height===0);
- const refine=local?[]:[...[...worst].sort((a,b)=>b.errors.auto.T-a.errors.auto.T).slice(0,1),...[...worst].sort((a,b)=>b.errors.auto.L-a.errors.auto.L).slice(0,1),{patch:4,footprint:.75,mu:1,height:0},{patch:5,footprint:2,mu:1,height:0}];
+ const refine=local?[]:minimal?[...worst]:[...[...worst].sort((a,b)=>b.errors.auto.T-a.errors.auto.T).slice(0,1),...[...worst].sort((a,b)=>b.errors.auto.L-a.errors.auto.L).slice(0,1),{patch:4,footprint:.75,mu:1,height:0},{patch:5,footprint:2,mu:1,height:0}];
  // Also refine the worst oblique path in space and along the ray independently.
  if(!local)refine.push(...rows.filter(r=>r.height>0).sort((a,b)=>b.errors.auto.T-a.errors.auto.T).slice(0,1));
  const unique=refine.filter((r,i)=>refine.findIndex(s=>r.patch===s.patch&&r.footprint===s.footprint&&r.height===s.height)===i);
@@ -106,5 +112,5 @@ export async function cloudTransitionProbe(gpu:ReturnType<typeof cloudProbe>,hea
   const nodes=[.25,.5,.75,1].map(end=>({end,local16:draw(c,16,192,0,1,0,end),reference64:draw(c,64,192,0,1,0,end)}));
   localPrototype.push({...c,nodes});
  }
- return {complete:true,scope:local?'Frozen weather/type/envelope; actual local voxel phase vs global ensemble':`40 original radial cases, ${extended?48:0} predetermined additional points, plus 3 finite oblique paths`,referenceBoundary:'Independent point-ray integrator shares the production near material and approximate lighting; not full physical truth',budget:{height:64,light:5,substeps:3,voxel:true,referenceFootprint:.02},rows,convergence,localPrototype};
+ return {complete:true,scope:local?'Frozen weather/type/envelope; actual local voxel phase vs global ensemble':minimal?'PR1 minimal: patch28/F2 and 80km/patch5/F4/mu.16':`40 original radial cases, ${extended?48:0} predetermined additional points, plus 3 finite oblique paths`,referenceBoundary:'Independent point-ray integrator shares the production near material and approximate lighting; not full physical truth',budget:{height:64,light:5,substeps:3,responseNodes,voxel:true,referenceFootprint:.02},rows,convergence,localPrototype};
 }

@@ -1,5 +1,6 @@
 import {cloudProbe} from './cloudProbe';
 import {cloudTransitionProbe} from './cloudTransitionProbe';
+import {pathResponseLighting} from './pathResponsePrototype';
 import common from '../src/effects/hillaire-atmosphere/shaders/common.glsl?raw';
 import density from '../src/effects/global-clouds/shaders/density.glsl?raw';
 import voxel from '../src/effects/global-clouds/shaders/voxel.glsl?raw';
@@ -24,8 +25,9 @@ try{
     .replace('mix(.72,.55,type)', 'u_envelopeMix*mix(.72,.55,type)')
     .replace('mix(.61,.36,cover)-.035*(1.-type)', 'mix(mix(.76,.38,cover),mix(.61,.36,cover)-.035*(1.-type),u_envelopeMix)')):density;
   const footprint=17000*2*Math.tan(Math.PI/6)/(1080*.65);
+  const lightingSource=new URLSearchParams(location.search).has('path-response')?pathResponseLighting(lighting):lighting;
   const header='#define LAYERED_CLOUDS\n#define LIGHT_STEPS 5\n#define CLOUD_STEPS 64\n#define CLOUD_SUBSTEPS 3\n'+common+transport+densitySource+voxel+
-    'vec3 u_camera;uniform vec3 u_moon;uniform bool u_atmosphere;uniform float u_moonFraction,u_moonGain,u_pixelAngle,u_debugView;float debugFootprint=0.,debugPathLength=0.,debugWeather=0.,debugWeatherLength=0.;struct CloudPhases{vec3 sun;vec3 moon;};'+environment+lighting+
+    'vec3 u_camera;uniform vec3 u_moon;uniform bool u_atmosphere;uniform float u_moonFraction,u_moonGain,u_pixelAngle,u_debugView;float debugFootprint=0.,debugPathLength=0.,debugWeather=0.,debugWeatherLength=0.;struct CloudPhases{vec3 sun;vec3 moon;};'+environment+lightingSource+
     'vec3 cloudSource(vec3 light){return light;}'+cloudTransport+march.slice(march.indexOf('CloudSegment integrateCloud'),march.indexOf('void main()'));
   const main=`uniform float u_grid,u_footprint,u_reference,u_steps,u_statistics,u_resolved;void main(){
     float patchIndex=floor((gl_FragCoord.x-.5)/u_grid);float lon=-1.7+patchIndex*.37,lat=.45+sin(patchIndex*1.7)*.6;

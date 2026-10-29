@@ -3,6 +3,7 @@ import {GlobalCloudEffect,type CloudModel} from '../src/effects/global-clouds/Gl
 import {cloudDefaults} from '../src/effects/global-clouds/config';
 import {webglTrace} from './webglTrace';
 import {prepareCelestialFrame} from './celestialFixture';
+import {pathResponseLighting} from './pathResponsePrototype';
 
 // Actual main entry, including CloudComparison and its shared resource owner.
 // All controls live in this fixture; no browser evaluation mutates app internals.
@@ -15,9 +16,11 @@ const getContext=HTMLCanvasElement.prototype.getContext;
 HTMLCanvasElement.prototype.getContext=function(this:HTMLCanvasElement,...args:Parameters<typeof getContext>){const result=getContext.apply(this,args);if(args[0]==='webgl2'&&result&&!trace)trace=webglTrace(result as WebGL2RenderingContext);return result;} as typeof getContext;
 let force=0,mask=0;
 const mount=GlobalCloudEffect.prototype.mount;
-if(query.has('diagnostics'))GlobalCloudEffect.prototype.mount=function(context){
+if(query.has('diagnostics')||query.has('path-response'))GlobalCloudEffect.prototype.mount=function(context){
   const internal=this as unknown as {model:CloudModel;uniforms:()=>Record<string,unknown>};
   if(this.id==='global-clouds'){
+    if(query.has('path-response'))internal.model={...internal.model,lighting:pathResponseLighting(internal.model.lighting)};
+    if(query.has('diagnostics')){
     const uniforms=internal.uniforms.bind(this);internal.uniforms=()=>({...uniforms(),u_morphForce:()=>force,u_morphMask:()=>mask});
     internal.model={...internal.model,density:'uniform float u_morphForce,u_morphMask;\n'+internal.model.density
       // Override only the automatic blend; a completed near/far call must
@@ -25,6 +28,7 @@ if(query.has('diagnostics'))GlobalCloudEffect.prototype.mount=function(context){
       .replace('if(cloudRepresentation==2)return 1.;','if(cloudRepresentation==2)return 1.;if(u_morphForce>0.)return u_morphForce<1.5?0.:1.;')
       .replace('float cluster=cloudCluster(column,weather.x,weather.y);if(cluster<=.001)return 0.;','if(u_morphMask==1.)return weather.x*9.;float cluster=cloudCluster(column,weather.x,weather.y);if(u_morphMask==2.)return cluster*9.;if(cluster<=.001)return 0.;')
       .replace('if(!coarse&&footprint<.8){','if(!coarse&&footprint<.8&&u_morphMask!=3.){')};
+    }
   }
   mount.call(this,context);
 };
@@ -47,11 +51,11 @@ try{
  let error='';viewer.scene.renderError.addEventListener((_s:unknown,e:unknown)=>{error=String(e);status.textContent=error;output.textContent=JSON.stringify({complete:false,error,contextLost:gl.isContextLost(),buffer:[gl.drawingBufferWidth,gl.drawingBufferHeight],canvas:[viewer.canvas.width,viewer.canvas.height],viewport:gl.getParameter(gl.VIEWPORT)});});
  const frame=(count=3)=>new Promise<void>((resolve,reject)=>{if(error){reject(new Error(error));return;}let n=0;const removeError=viewer.scene.renderError.addEventListener((_s:unknown,e:unknown)=>{remove();removeError();reject(e);});const remove=viewer.scene.postRender.addEventListener(()=>{if(++n>=count){remove();removeError();resolve();}});});
  const state=()=>{
-   const internal=effect as unknown as {voxelEnabled:boolean;skipVoxels:boolean;stage:PostProcessStageComposite};
+   const internal=effect as unknown as {voxelEnabled:boolean;skipVoxels:boolean;stage:PostProcessStageComposite;model:CloudModel};
    const stage=internal.stage.get(0) as unknown as {uniforms:Record<string,unknown>};
    const value=(name:string)=>{const v=stage.uniforms[name];return typeof v==='function'?v():v;};
    const uniformBudget=Object.fromEntries(['u_cloudSteps','u_cloudSubsteps','u_lightSteps','u_cloudIntervals','u_cloudRepresentations','u_columnGrid','u_columnSections','u_columnQuadrature','u_columnOrders','u_columnComponents','u_highFilterGrid'].map(name=>[name,value(name)]));
-   return {utc:JulianDate.toIso8601(viewer.clock.currentTime),buffer:[gl.drawingBufferWidth,gl.drawingBufferHeight],camera:{position:Cartesian3.pack(viewer.camera.positionWC,[]),direction:Cartesian3.pack(viewer.camera.directionWC,[]),up:Cartesian3.pack(viewer.camera.upWC,[]),fovy:f.fovy},parameters:{...clouds.parameters},quality:effect.quality,storage:effect.renderTargetMode,motion:effect.motion,atmosphere:{...atmosphere.parameters},force,mask,uniformBudget,voxelEnabled:internal.voxelEnabled,voxelReady:effect.voxelReady,skipVoxels:internal.skipVoxels,mainLightModel:'finite local body plus gated voxel cone',mainConeTaps:value('u_lightSteps'),visible:!document.hidden,focused:document.hasFocus()};
+   return {utc:JulianDate.toIso8601(viewer.clock.currentTime),buffer:[gl.drawingBufferWidth,gl.drawingBufferHeight],camera:{position:Cartesian3.pack(viewer.camera.positionWC,[]),direction:Cartesian3.pack(viewer.camera.directionWC,[]),up:Cartesian3.pack(viewer.camera.upWC,[]),fovy:f.fovy},parameters:{...clouds.parameters},quality:effect.quality,storage:effect.renderTargetMode,motion:effect.motion,atmosphere:{...atmosphere.parameters},force,mask,uniformBudget,voxelEnabled:internal.voxelEnabled,voxelReady:effect.voxelReady,skipVoxels:internal.skipVoxels,mainLightModel:internal.model.density.includes('vec3 cloudBody(')?'world body plus voxel residual':'legacy voxel',mainConeTaps:value('u_lightSteps'),visible:!document.hidden,focused:document.hasFocus()};
  };
  const image=(name:string,url:string)=>{const fig=document.createElement('figure'),img=new Image();img.dataset.name=name;img.alt=name;img.src=url;const cap=document.createElement('figcaption');cap.textContent=name;fig.append(img,cap);panel.querySelector('#evidence')!.append(fig);};
  const raw=(name:string,save=true)=>{
@@ -72,7 +76,7 @@ try{
  const configure=async(name:string)=>{clouds.updateParameters({...cloudDefaults,...(name==='high-only'?{coverage:0}:{})});await clouds.ready;force=0;mask=0;effect.setMotion({angle:0,highAngle:0,evolution:0});camera(...scenes[name]);await frame(8);};
  const run=(fn:()=>Promise<unknown>)=>async()=>{buttons.forEach(b=>b.disabled=true);try{output.textContent=JSON.stringify({running:true,startup});const result=await fn();output.textContent=JSON.stringify({complete:true,startup,result});status.textContent='COMPLETE';}catch(e){output.textContent=String(e);status.textContent='ERROR';}finally{buttons.forEach(b=>b.disabled=false);}};
  panel.querySelector<HTMLButtonElement>('#captures')!.onclick=run(async()=>{const rows=[];for(const name of Object.keys(scenes)){await configure(name);rows.push(capture(name,true));}return rows;});
- panel.querySelector<HTMLButtonElement>('#matrix')!.onclick=run(async()=>{const rows=[];for(const name of ['global','orbit','ground','inside','high-only']){await configure(name);const content=raw(name,false);for(const mode of ['frame','passes'] as const)for(let round=0;round<2;round++){status.textContent=`${name} ${mode} ${round}`;rows.push({name,mode,round,content,initial:state(),timing:await trace!.collect(mode,200,90000),final:state()});output.textContent=JSON.stringify({running:true,startup,result:rows});}}return rows;});
+ panel.querySelector<HTMLButtonElement>('#matrix')!.onclick=run(async()=>{const rows=[];const names=query.has('minimal')?['global','orbit','ground']:['global','orbit','ground','inside','high-only'];const modes:('frame'|'passes')[]=query.has('minimal')?['passes']:['frame','passes'];for(const name of names){await configure(name);const content=raw(name,false);for(const mode of modes)for(let round=0;round<2;round++){status.textContent=`${name} ${mode} ${round}`;rows.push({name,mode,round,content,initial:state(),timing:await trace!.collect(mode,200,90000),final:state()});output.textContent=JSON.stringify({running:true,startup,result:rows});}}return rows;});
  panel.querySelector<HTMLButtonElement>('#tour')!.onclick=run(async()=>{
    await configure('global');const rows=[];const keys:[[number,number],number][]=[[[17e6,-90],6],[[1.2e6,-90],14],[[160e3,-60],8],[[8300,-18],6],[[3020,0],6],[[800,12],0]];
    const frames=[];for(let k=0;k<keys.length-1;k++){const [a,count]=keys[k],b=keys[k+1][0];for(let j=0;j<count*8;j++){const t=j/(count*8),h=Math.exp(Math.log(a[0])*(1-t)+Math.log(b[0])*t);camera(h,a[1]*(1-t)+b[1]*t);await frame(1);frames.push(state());if(j%8===0)rows.push(capture('path-'+String(rows.length).padStart(2,'0')));}}
