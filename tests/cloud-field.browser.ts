@@ -4,12 +4,12 @@ import density from '../src/effects/global-clouds/shaders/density.glsl?raw';
 import voxel from '../src/effects/global-clouds/shaders/voxel.glsl?raw';
 const gpu=cloudProbe(document.querySelector<HTMLCanvasElement>('#probe')!);
 try{
- const instrumented=density.replace('if(cluster<=.001)return 0.;','if(u_fieldMode==1.)return cover;if(u_fieldMode==2.)return cluster;if(cluster<=.001)return 0.;');
+ const instrumented=density;
  const source='uniform float u_fieldMode,u_extent;'+common+instrumented+voxel+`void main(){
    float lon=radians(-97.52),lat=radians(35.46);vec3 n=vec3(cos(lat)*cos(lon),cos(lat)*sin(lon),sin(lat)),east=vec3(-sin(lon),cos(lon),0),north=cross(n,east);
    vec2 uv=(gl_FragCoord.xy/384.-.5)*u_extent;vec3 point=normalize(n*Rg+east*uv.x+north*uv.y)*(Rg+u_base+.5);
    float v=0.;if(u_fieldMode==0.)v=textureLod(u_weather,weatherUV(point),0.).r;
-   else if(u_fieldMode<3.)v=lowCloudDensity(point,.02,false);
+   else if(u_fieldMode<3.){vec2 w=cloudWeather(point,.02);v=u_fieldMode==1.?w.x:cloudCluster(advect(normalize(point)*(Rg+u_base)),w.x,w.y);}
    else{float tau=0.;for(int j=0;j<64;j++){vec3 p=normalize(point)*(Rg+u_base+(float(j)+.5)/64.*u_thickness);tau+=lowCloudDensity(p,.02,u_fieldMode==3.)*u_thickness/64.;}v=1.-exp(-tau);}
    out_FragColor=vec4(vec3(v),1);
  }`;

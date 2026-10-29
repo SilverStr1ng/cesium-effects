@@ -138,6 +138,9 @@ CloudSegment integrateCloudMedium(vec3 d,vec2 segment){
         }
         if(result.cloudT<.005&&u_debugView==0.)break;
     }
+    #ifdef CLOUD_DIAGNOSTICS
+    if(result.cloudT<.005&&processedEnd<segment.y)cloudDensityWork.z+=1.;
+    #endif
     // Preserve the complete clear-air segment even when cloud opacity permits
     // early exit. Its background subtraction must refer to the same endpoints.
     if(u_atmosphere&&processedEnd<segment.y){

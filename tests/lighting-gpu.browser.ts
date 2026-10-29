@@ -106,6 +106,9 @@ try{
     const int FAR_RESPONSE_LIMIT=8;vec4 farResponse[9];vec3 farSunResponse[8],farMoonResponse[8];
     void prepareFarResponse(vec3 o,vec3 d,vec2 p,float f,int count,vec3 sun,vec3 moon,bool moonActive){}
     float lowCloudDensity(vec3 p,float f,bool coarse){return 0.;}float highCloudDensity(vec3 p,float f){return 0.;}
+    const float CLOUD_RESIDUAL_WEIGHT=.12;vec3 resolvedBody=vec3(0);float resolvedBodyRho=0.;
+    float residualCloudDensity(vec3 p,float f,bool coarse){return 0.;}
+    float bodyPathProfile(vec3 o,vec3 d,vec2 path,float bottom,float top){return 0.;}
     float layerBase(){return cloudLayer==0?u_base:u_highBase;}float layerThickness(){return cloudLayer==0?u_thickness:u_highThickness;}
     float voxelEmptyDistance(vec3 p,float f){return 0.;}float voxelBodyDepth(vec3 p,float f){return 0.;}
     float farCloudWeight(float f){return 0.;}float farCloudLightDepth(vec3 p,vec3 l,float f){return 0.;}

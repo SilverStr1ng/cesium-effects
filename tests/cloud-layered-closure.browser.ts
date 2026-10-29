@@ -38,25 +38,29 @@ try{
   // One pixel per independent optical component, plus its exact empty weight.
   // Full-ray transport below never calls the tested cloud/air transport helpers.
   const reference=shared+`
-    float lowProfile(vec3 p){float h=(length(p)-Rg-u_base)/u_thickness;return h<=0.||h>=1.?0.:12.*h*(1.-h)*(1.-h)/u_thickness;}
-    void main(){int k=int(gl_FragCoord.x);float weight=1.,tau=0.,inside=0.;
-      if(k<8){vec4 c=texture(u_cloudComponents,vec3(.5/32.,31.5/32.,(float(k)+.5)/8.));weight=c.b*255./256.;tau=(exp((c.r*65280.+c.g*255.)/65535.*log(65.))-1.)*u_density*u_thickness/3.8;inside=c.a;}
+    float lowProfile(vec3 p){float height=u_thickness*.94,h=(length(p)-Rg-u_base-u_thickness*.06)/height;return h<=0.||h>=1.?0.:12.*h*(1.-h)*(1.-h)/height;}
+    float residualProfile(vec3 p){float h=(length(p)-Rg-u_base)/u_thickness;return h<=0.||h>=1.?0.:12.*h*(1.-h)*(1.-h)/u_thickness;}
+    void main(){int k=int(gl_FragCoord.x);float weight=1.,tau=0.,voxelInterior=0.;
+      if(k<8){vec4 c=texture(u_cloudComponents,vec3(.5/32.,31.5/32.,(float(k)+.5)/8.));weight=c.b*255./256.;tau=(exp((c.r*65280.+c.g*255.)/65535.*log(65.))-1.)*u_density*u_thickness/3.8*.12;voxelInterior=c.a;}
       else{for(int j=0;j<8;j++)weight-=texture(u_cloudComponents,vec3(.5/32.,31.5/32.,(float(j)+.5)/8.)).b*255./256.;}
       vec2 path=atmosphereInterval(u_camera,u_ray,u_maximum);float ds=max(0.,path.y-path.x)/u_steps;vec3 L=vec3(0),depth=vec3(0),error=vec3(0),sumError=vec3(0);
       CloudPhases phases=CloudPhases(waterPhases(dot(u_ray,u_sun)),vec3(0));
       for(float j=0.;j<u_steps;j++){
         vec3 p=u_camera+u_ray*(path.x+(j+.5)*ds),air,e;atmosphereSource(p,u_ray,u_sun,air,e);
-        float rho=tau*lowProfile(p),hi=(length(p)-Rg-u_highBase)/u_highThickness;
+        float bodyTau=2.7*u_thickness*u_density,bodyRho=bodyTau*lowProfile(p),rho=bodyRho+tau*residualProfile(p),hi=(length(p)-Rg-u_highBase)/u_highThickness;
         float ice=hi<=0.||hi>=1.?0.:u_highOpticalDepth*30.*hi*hi*(1.-hi)*(1.-hi)/u_highThickness;
         vec3 source=vec3(0);
         if(rho>0.){
-          float shadow=0.;for(int z=0;z<32;z++)shadow+=lowProfile(p+u_sun*((float(z)+.5)*1.5/32.))*1.5/32.;
+          float shadow=0.;for(int z=0;z<32;z++){vec3 q=p+u_sun*((float(z)+.5)*1.5/32.);shadow+=(bodyTau*lowProfile(q)+tau*residualProfile(q))*1.5/32.;}
           float h=clamp((length(p)-Rg-u_base)/u_thickness,0.,1.);vec3 zenith,horizon;cloudEnvironment(p,zenith,horizon);
           // Independently state the resolved material's source law. The
           // per-component reference never calls farResponseIllumination.
+          float bodyDepth=max(0.,min(length(p)-Rg-u_base-u_thickness*.06,Rg+u_base+u_thickness-length(p)));
+          float bodyInterior=(1.-exp(-3.*bodyDepth))*smoothstep(.1,3.,bodyRho);
+          float inside=mix(voxelInterior,bodyInterior,bodyRho/max(1e-8,rho));
           float probability=.18+.82*inside,forward=smoothstep(.35,.95,dot(u_ray,u_sun));
           vec3 orderDepth=vec3(1.,.55-.23*forward*inside,.28-.16*forward*inside);
-          vec3 light=sunTransmission(u_transmittance,p,u_sun)*vec3(1.6,1.55,1.47)*dot(phases.sun*vec3(1.,.5*probability,.25*probability),exp(-tau*shadow*orderDepth))*mix(.8,1.,smoothstep(0.,.15,h));
+          vec3 light=sunTransmission(u_transmittance,p,u_sun)*vec3(1.6,1.55,1.47)*dot(phases.sun*vec3(1.,.5*probability,.25*probability),exp(-shadow*orderDepth))*mix(.8,1.,smoothstep(0.,.15,h));
           light+=mix(mix(zenith,horizon,.35),zenith,sqrt(h))*.48*mix(1.,.55,inside);
           light+=vec3(.015,.017,.019)*max(0.,dot(normalize(p),u_sun))*(1.-h);source+=rho*light;
         }

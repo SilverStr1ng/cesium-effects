@@ -8,7 +8,7 @@ import {measureResource,type ResourceTiming} from './CloudInitialization';
 // Increment when WeatherField, CloudNoise, CumulusNoise, VoxelCloudField,
 // CirrusField or CloudOptics changes its data/layout/material law. Rendering
 // quality, HDR and weather seed do not change the fixed-material record.
-export const CLOUD_ASSET_VERSION=6;
+export const CLOUD_ASSET_VERSION=10;
 export interface VolumeAsset {bytes:Uint8Array;mips:Uint8Array[];}
 export interface FixedCloudAssets {version:number;opticsVersion:number;noise:VolumeAsset;ice:ReturnType<typeof createCirrusField>;voxel:VolumeAsset;optics:Uint8Array;components:Uint8Array;}
 export interface CloudAssetPayload {seed:number;weather:Uint8Array;fixed?:FixedCloudAssets;}

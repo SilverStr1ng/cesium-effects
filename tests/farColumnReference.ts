@@ -2,6 +2,7 @@ import {createWeather,WEATHER_WIDTH as W,WEATHER_HEIGHT as H} from '../src/effec
 import {createCumulusNoise} from '../src/effects/global-clouds/CumulusNoise';
 import {createVoxelCloudField,sampleVolume} from '../src/effects/global-clouds/VoxelCloudField';
 import {createCloudOpticsData} from '../src/effects/global-clouds/CloudOptics';
+import {cloudBodyColumn} from '../src/effects/global-clouds/CloudMorphology';
 
 export type V3=[number,number,number];
 export const add=(a:V3,b:V3):V3=>a.map((v,i)=>v+b[i]) as V3;
@@ -32,11 +33,13 @@ export function farField(){
     if(cover<=0)return [0,0,0,0,top];
     cover=clamp(cover+(weatherAt(p,2)-.5)*.7+(weatherAt(p,3)-.5)*1.3);
     if(cover<=0)return [0,0,0,0,top];
-    const bank=[0,1,2,3].map(c=>noiseAt(p,71.3,c));
-    const q=p.map((v,i)=>v+(bank[[0,1,3][i]]-.5)*3.4+13*.43) as V3;
-    const cell=mix(noiseAt(q,29.713,0),bank[3],mix(.72,.55,type));
+    const bank=[0,1,2,3].map(c=>noiseAt(p,213.9,c));
+    const q=p.map((v,i)=>v+(bank[[0,1,3][i]]-.5)*11.4+13*.43) as V3;
+    const cell=mix(noiseAt(q,71.3,3),bank[3],mix(.62,.45,type));
     const threshold=mix(.61,.36,cover)-.035*(1-type),cluster=smooth(threshold-.05,threshold+.085,cell);
-    const scale=density*thickness/3.8*slant*cluster*smooth(0,.2,cover)*fraction;
+    const body=cloudBodyColumn(noiseAt(p.map(v=>v+13*.19) as V3,23.9,3),cover,type,cluster,thickness,[0,1,2].map(c=>noiseAt(p.map(v=>v+13*.19) as V3,23.9,c)),[0,1].map(c=>noiseAt(p.map(v=>v+13*.61) as V3,4.7,c)),noiseAt(p.map(v=>v+13*.19) as V3,71.3,3));
+    const bodyTau=body.tau*density*slant*fraction;
+    const scale=density*thickness/3.8*slant*cluster*smooth(0,.2,cover)*fraction*.12*smooth(0,.5,body.tau);
     const uv:V3=[clamp(((1-cover)*.22+(1-cluster)*.3)/.52)*31,type*31,clamp((Math.log2(Math.max(.03125,scale))+5)/12)*31];
     const raw=[0,1,2,3].map(c=>volume(optics,32,uv,c)),thin=Math.min(1,scale/.03125);
     let opacity=raw[0]*thin;
@@ -46,7 +49,8 @@ export function farField(){
         return mix(mix(at(a,b),at(a+1,b),fx),mix(at(a,b+1),at(a+1,b+1),fx),fy);};
       opacity=0;for(let k=0;k<8;k++){const tau=Math.expm1((sample(k,0)*65280+sample(k,1)*255)/65535*Math.log(65));opacity+=sample(k,2)*255/256*-Math.expm1(-tau*scale);}
     }
-    return [opacity,raw[1]/Math.max(1/255,1-raw[1])*scale,raw[2]*thin*opacity,raw[3]*thin,top];
+    opacity=1-Math.exp(-bodyTau)*(1-opacity);
+    return [opacity,bodyTau+raw[1]/Math.max(1/255,1-raw[1])*scale,raw[2]*thin*opacity,raw[3]*thin,top];
   }
   return {point};
 }

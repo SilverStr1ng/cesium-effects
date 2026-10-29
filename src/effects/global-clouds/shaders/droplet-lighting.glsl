@@ -66,6 +66,14 @@ float waterLightDepth(vec3 p,vec3 light,float rho,float footprint){
     float nearStep=.01,end=.6,tau=rho*nearStep;
     #ifdef LAYERED_CLOUDS
     if(u_voxelReady)end=1.5;
+    if(cloudLayer==0){
+        // The shared local body has a normalized profile and a finite spherical
+        // light path. Integrate it once; cone taps retain the voxel residual.
+        // Besides matching the statistical source, this avoids rebuilding the
+        // three-fetch body envelope at every cone tap.
+        tau=resolvedBody.x*u_density*bodyPathProfile(p,light,vec2(0,end),resolvedBody.y,resolvedBody.z)
+            +max(0.,rho-resolvedBodyRho)*nearStep;
+    }
     #endif
     for(int j=1;j<LIGHT_STEPS;j++){
         float a=float(j-1)/float(LIGHT_STEPS-1),b=float(j)/float(LIGHT_STEPS-1);
@@ -76,7 +84,7 @@ float waterLightDepth(vec3 p,vec3 light,float rho,float footprint){
         // This cone is only reached by the resolved main-cloud branch. Calling
         // the dispatcher here would inline an entire statistical footprint
         // filter into every shadow tap on ANGLE, even though it cannot execute.
-        float sampleDensity=lowCloudDensity(p+light*t+cone,max(footprint,t*.25),t>.1);
+        float sampleDensity=CLOUD_RESIDUAL_WEIGHT*smoothstep(0.,.5,resolvedBody.x)*residualCloudDensity(p+light*t+cone,max(footprint,t*.25),t>.1);
         #else
         float sampleDensity=cloudDensity(p+light*t+cone,max(footprint,t*.25),t>.1);
         #endif
@@ -129,6 +137,11 @@ vec3 illumination(vec3 p,float rho,float footprint,CloudPhases phases){
         // extinction supplies the interior probability; empty area is excluded.
         interior=farCloudWeight(footprint)>=1.?farMoments.b:
             (1.-exp(-3.*voxelBodyDepth(p,footprint)))*smoothstep(.1,3.,rho);
+        if(farCloudWeight(footprint)<1.){
+            float depth=max(0.,min(length(p)-Rg-u_base-u_thickness*resolvedBody.y,Rg+u_base+u_thickness*resolvedBody.z-length(p)));
+            float bodyInterior=(1.-exp(-3.*depth))*smoothstep(.1,3.,resolvedBodyRho);
+            interior=mix(interior,bodyInterior,resolvedBodyRho/max(.00001,rho));
+        }
         ambientVisibility=mix(1.,.55,interior);
         powder=1.;baseShadow=mix(.8,1.,smoothstep(0.,.15,h));
     }

@@ -3,7 +3,7 @@ import {CUMULUS_NOISE_SIZE} from './CumulusNoise';
 import {cloudMaterialPosition,cloudMaterialStretch} from './CloudMorphology';
 
 export const CLOUD_OPTICS_SIZE=32;
-export const CLOUD_OPTICS_VERSION=6;
+export const CLOUD_OPTICS_VERSION=10;
 export const CLOUD_COMPONENTS=8;
 export interface CloudOpticsMaterial {detail:number;thickness:number;wind?:number;}
 export const defaultOpticsMaterial:CloudOpticsMaterial={detail:.55,thickness:3.8,wind:24};
@@ -21,7 +21,11 @@ export function meanColumnReflectance(depths:readonly number[],scale:number){
   return weight>0?reflected/weight:0;
 }
 
-/** Conditional optical statistics of the near voxel material. Axes are density cut,
+/** Conditional optical statistics of the voxel RESIDUAL material. Version 10
+ * keeps the version-6 voxel law, but uses it at CLOUD_RESIDUAL_WEIGHT=.12 beside
+ * a locally positioned, independently supported body. The body support also gates this residual. Its tau and its
+ * real boundaries are applied to each positive and zero-depth component before
+ * averaging; they are not part of this global ensemble. Axes are density cut,
  * cloud type and log2(thickness * density * slant / 3.8 km). The table contains
  * E[1-exp(-tau)] and the mean physical column depth. This is a statistical far
  * representation, not another threshold applied to an averaged noise mip.

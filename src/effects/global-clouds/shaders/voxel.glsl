@@ -24,14 +24,10 @@ vec4 voxelShape(vec3 p,float footprint){
     return a.r>b.r*.8?a:vec4(b.r*.8,b.g,b.b*(13.57/7.83),b.a);
 }
 float voxelEmptyDistance(vec3 p,float footprint){
-    if(!u_voxelReady||!u_skipVoxels||cloudLayer!=0||farCloudWeight(footprint)>0.)return 0.;
-    debugMipA=max(0.,debugMipA);debugMipB=max(0.,debugMipB);
-    vec3 q=voxelPosition(p);
-    float a=textureLod(u_voxels,(q+u_seed*.23)/7.83,0.).g*(16./128.)*7.83;
-    float b=textureLod(u_voxels,(voxelRotate(q)+u_seed*.31)/13.57,0.).g*(16./128.)*13.57;
-    // Trilinear mip filtering includes the next coarser level. Box support plus
-    // interpolation reaches < 3*sqrt(3)*footprint; round up conservatively.
-    return max(0.,min(a,b)/voxelStretch()-6.*footprint);
+    // The connected world body can occupy the old voxel's empty cells. That
+    // EDT bounds only the residual, so it must not skip the combined medium.
+    // The stretch bound remains valid for voxel filtering and interior depth.
+    return 0.;
 }
 float voxelBodyDepth(vec3 p,float footprint){
     if(!u_voxelReady||cloudLayer!=0)return 0.;
