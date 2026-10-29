@@ -490,12 +490,17 @@ float residualCloudMaterial(vec3 p,float footprint,bool coarse,vec2 weather,floa
     float body=smoothstep(0.,boundary,field);
     return body*smoothstep(0.,.045,h)*(1.-smoothstep(.92,1.,h))*7.*u_density;
 }
+// Shadow taps must use THEIR column's support. Do not mutate resolvedBody:
+// it belongs to the observation sample and is still needed by its lighting.
 float residualCloudDensity(vec3 p,float footprint,bool coarse){
     float h=(length(p)-Rg-u_base)/u_thickness;
     if(h<=0.||h>=1.||u_coverage<=0.)return 0.;
     vec2 weather=cloudWeather(p,footprint);if(weather.x<=0.)return 0.;
     vec3 column=advect(normalize(p)*(Rg+u_base));
-    return residualCloudMaterial(p,footprint,coarse,weather,cloudCluster(column,weather.x,weather.y));
+    float cluster=cloudCluster(column,weather.x,weather.y);if(cluster<=.001)return 0.;
+    vec3 body=cloudBody(column,weather.x,weather.y,cluster);
+    if(body.x<=0.)return 0.;
+    return CLOUD_RESIDUAL_WEIGHT*smoothstep(0.,.5,body.x)*residualCloudMaterial(p,footprint,coarse,weather,cluster);
 }
 float lowCloudDensity(vec3 p,float footprint,bool coarse){
     #ifdef CLOUD_DIAGNOSTICS

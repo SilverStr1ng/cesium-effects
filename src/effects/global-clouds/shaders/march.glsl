@@ -128,7 +128,11 @@ CloudSegment integrateCloudMedium(vec3 d,vec2 segment){
                     #ifdef LAYERED_CLOUDS
                     if(statistical)source=cloudSource(farResponseIllumination(p,i,phases));else
                     #endif
+                    #ifdef CLOUD_RESOLVED_LIGHTING
+                    source=cloudSource(resolvedIllumination(p,rho,footprint,phases));
+                    #else
                     source=cloudSource(illumination(p,rho,footprint,phases));
+                    #endif
                 }
                 if(u_atmosphere)atmosphereSource(p,d,u_sun,airSource,airExtinction);
                 cloudTransportStep(result,airSource,airExtinction,rho,source,ds);

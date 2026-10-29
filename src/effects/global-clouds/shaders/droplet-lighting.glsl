@@ -1,4 +1,5 @@
 // Dual-lobe droplet scattering, integrated for both directional light sources.
+#define CLOUD_RESOLVED_LIGHTING
 // |g| <= .9 in the public parameters. Its smallest legal denominator is .01;
 // .015 clipped the forward lobe and lost energy. Clamp only cosine roundoff.
 float waterPhase(float c,float g){return (1.-g*g)/(4.*PI*pow(1.+g*g-2.*g*clamp(c,-1.,1.),1.5));}
@@ -54,9 +55,9 @@ vec3 iceIllumination(vec3 p,CloudPhases phases){
     return result+mix(zenith,horizon,.35)*u_highAlbedo*.35;
 }
 #endif
-float waterLightDepth(vec3 p,vec3 light,float rho,float footprint){
+float waterLightDepthMode(vec3 p,vec3 light,float rho,float footprint,bool statistical){
     #ifdef LAYERED_CLOUDS
-    if(farCloudWeight(footprint)>=1.)return farCloudLightDepth(p,light,footprint);
+    if(statistical)return farCloudLightDepth(p,light,footprint);
     #endif
     vec3 axis=abs(light.z)>.99?vec3(0,1,0):vec3(0,0,1);
     vec3 tangent=normalize(cross(axis,light)),bitangent=cross(light,tangent);
@@ -69,8 +70,8 @@ float waterLightDepth(vec3 p,vec3 light,float rho,float footprint){
     if(cloudLayer==0){
         // The shared local body has a normalized profile and a finite spherical
         // light path. Integrate it once; cone taps retain the voxel residual.
-        // Besides matching the statistical source, this avoids rebuilding the
-        // three-fetch body envelope at every cone tap.
+        // Residual taps below independently check their local support. The
+        // analytic body shadow is still a frozen local-column approximation.
         tau=resolvedBody.x*u_density*bodyPathProfile(p,light,vec2(0,end),resolvedBody.y,resolvedBody.z)
             +max(0.,rho-resolvedBodyRho)*nearStep;
     }
@@ -84,7 +85,7 @@ float waterLightDepth(vec3 p,vec3 light,float rho,float footprint){
         // This cone is only reached by the resolved main-cloud branch. Calling
         // the dispatcher here would inline an entire statistical footprint
         // filter into every shadow tap on ANGLE, even though it cannot execute.
-        float sampleDensity=CLOUD_RESIDUAL_WEIGHT*smoothstep(0.,.5,resolvedBody.x)*residualCloudDensity(p+light*t+cone,max(footprint,t*.25),t>.1);
+        float sampleDensity=residualCloudDensity(p+light*t+cone,max(footprint,t*.25),t>.1);
         #else
         float sampleDensity=cloudDensity(p+light*t+cone,max(footprint,t*.25),t>.1);
         #endif
@@ -95,20 +96,20 @@ float waterLightDepth(vec3 p,vec3 light,float rho,float footprint){
 float waterScatter(vec3 phase,float tau){
     return dot(phase*vec3(1.,.5,.25),exp(-tau*vec3(1.,.5,.25)));
 }
-vec3 waterDirectional(vec3 p,vec3 light,vec3 phase,float rho,float footprint,float interior){
+vec3 waterDirectionalMode(vec3 p,vec3 light,vec3 phase,float rho,float footprint,float interior,bool statistical){
     if(planetOccludes(p,light))return vec3(0);
     vec3 transmission=u_atmosphere?sunTransmission(u_transmittance,p,light):vec3(1);
-    float tau=waterLightDepth(p,light,rho,footprint);
+    float tau=waterLightDepthMode(p,light,rho,footprint,statistical);
     vec3 resolved=transmission*waterScatter(phase,tau);
     #ifdef LAYERED_CLOUDS
-    if(cloudLayer==0&&farCloudWeight(footprint)>=1.){
+    if(cloudLayer==0&&statistical){
         // Laplace transform of the locally fitted gamma depth distribution.
         // Apply each scattering order to its own optical scale; do not use
         // exp(-E[tau]) or exponentiate an already averaged transmission.
         vec3 meanTransmission=pow(vec3(1.)+tau*vec3(1.,.5,.25)/farShape,vec3(-farShape));
         resolved=transmission*dot(phase*vec3(1.,.5,.25),meanTransmission);
     }
-    if(u_voxelReady&&cloudLayer==0&&farCloudWeight(footprint)<1.){
+    if(u_voxelReady&&cloudLayer==0&&!statistical){
         float probability=mix(.18,1.,interior);
         float forward=smoothstep(.35,.95,dot(normalize(p-u_camera),light));
         vec3 extinction=vec3(1.,mix(.55,.32,forward*interior),mix(.28,.12,forward*interior));
@@ -117,7 +118,7 @@ vec3 waterDirectional(vec3 p,vec3 light,vec3 phase,float rho,float footprint,flo
     #endif
     return resolved;
 }
-vec3 illumination(vec3 p,float rho,float footprint,CloudPhases phases){
+vec3 illuminationMode(vec3 p,float rho,float footprint,CloudPhases phases,bool statistical){
     #ifdef LAYERED_CLOUDS
     if(cloudLayer==1)return iceIllumination(p,phases);
     #endif
@@ -135,9 +136,9 @@ vec3 illumination(vec3 p,float rho,float footprint,CloudPhases phases){
     if(u_voxelReady&&cloudLayer==0){
         // No voxel mip fetch in the unresolved branch. Its conditional column
         // extinction supplies the interior probability; empty area is excluded.
-        interior=farCloudWeight(footprint)>=1.?farMoments.b:
+        interior=statistical?farMoments.b:
             (1.-exp(-3.*voxelBodyDepth(p,footprint)))*smoothstep(.1,3.,rho);
-        if(farCloudWeight(footprint)<1.){
+        if(!statistical){
             float depth=max(0.,min(length(p)-Rg-u_base-u_thickness*resolvedBody.y,Rg+u_base+u_thickness*resolvedBody.z-length(p)));
             float bodyInterior=(1.-exp(-3.*depth))*smoothstep(.1,3.,resolvedBodyRho);
             interior=mix(interior,bodyInterior,resolvedBodyRho/max(.00001,rho));
@@ -146,13 +147,13 @@ vec3 illumination(vec3 p,float rho,float footprint,CloudPhases phases){
         powder=1.;baseShadow=mix(.8,1.,smoothstep(0.,.15,h));
     }
     #endif
-    light+=waterDirectional(p,u_sun,phases.sun,rho,footprint,interior)*vec3(1.6,1.55,1.47)*powder*baseShadow;
+    light+=waterDirectionalMode(p,u_sun,phases.sun,rho,footprint,interior,statistical)*vec3(1.6,1.55,1.47)*powder*baseShadow;
     // Night adaptation is deliberately separate from the displayed moon disc.
     // Phase and Earth occlusion still apply. At noon this entire light march skips.
     float moonEnergy=pow(clamp(u_moonFraction,0.,1.),1.6)*u_moonGain*
         (1.-smoothstep(-.1,.04,sunHeight));
     if(moonEnergy>.0001)
-        light+=waterDirectional(p,u_moon,phases.moon,rho,footprint,interior)*vec3(.12,.14,.18)*moonEnergy*powder*baseShadow;
+        light+=waterDirectionalMode(p,u_moon,phases.moon,rho,footprint,interior,statistical)*vec3(.12,.14,.18)*moonEnergy*powder*baseShadow;
     // Hemispheric fill already represents diffuse/multiple-scattered sky light.
     // Two extra overhead taps used to suppress it a second time inside the cloud.
     vec3 zenith,horizon;cloudEnvironment(p,zenith,horizon);
@@ -163,6 +164,18 @@ vec3 illumination(vec3 p,float rho,float footprint,CloudPhases phases){
     light+=vec3(.0008,.0009,.0012)*moonEnergy*max(0.,moonHeight);
     return light;
 }
+// Production has already chosen its representation. A literal false keeps
+// the compatibility gamma/column builder out of every resolved light tap.
+vec3 resolvedIllumination(vec3 p,float rho,float footprint,CloudPhases phases){return illuminationMode(p,rho,footprint,phases,false);}
+bool statisticalLighting(float footprint){
+#ifdef LAYERED_CLOUDS
+    return farCloudWeight(footprint)>=1.;
+#else
+    return false;
+#endif
+}
+vec3 illumination(vec3 p,float rho,float footprint,CloudPhases phases){return illuminationMode(p,rho,footprint,phases,statisticalLighting(footprint));}
+float waterLightDepth(vec3 p,vec3 light,float rho,float footprint){return waterLightDepthMode(p,light,rho,footprint,statisticalLighting(footprint));}
 #ifdef LAYERED_CLOUDS
 vec3 farResponseIllumination(vec3 p,int node,CloudPhases phases){
     float absorbed=max(1e-7,farResponse[node+1].r-farResponse[node].r);
