@@ -20,8 +20,10 @@ if(query.has('diagnostics'))GlobalCloudEffect.prototype.mount=function(context){
   if(this.id==='global-clouds'){
     const uniforms=internal.uniforms.bind(this);internal.uniforms=()=>({...uniforms(),u_morphForce:()=>force,u_morphMask:()=>mask});
     internal.model={...internal.model,density:'uniform float u_morphForce,u_morphMask;\n'+internal.model.density
-      .replace('if(!u_opticsReady)return 0.;','if(!u_opticsReady)return 0.;if(u_morphForce>0.)return u_morphForce<1.5?0.:1.;')
-      .replace('if(cluster<=.001)return 0.;','if(u_morphMask==1.)return cover*9.;if(u_morphMask==2.)return cluster*9.;if(cluster<=.001)return 0.;')
+      // Override only the automatic blend; a completed near/far call must
+      // retain its own light and density representation inside that segment.
+      .replace('if(cloudRepresentation==2)return 1.;','if(cloudRepresentation==2)return 1.;if(u_morphForce>0.)return u_morphForce<1.5?0.:1.;')
+      .replace('float cluster=cloudCluster(column,weather.x,weather.y);if(cluster<=.001)return 0.;','if(u_morphMask==1.)return weather.x*9.;float cluster=cloudCluster(column,weather.x,weather.y);if(u_morphMask==2.)return cluster*9.;if(cluster<=.001)return 0.;')
       .replace('if(!coarse&&footprint<.8){','if(!coarse&&footprint<.8&&u_morphMask!=3.){')};
   }
   mount.call(this,context);
@@ -44,7 +46,13 @@ try{
  const pre=viewer.scene.preRender.addEventListener(()=>trace!.beforeFrame()),post=viewer.scene.postRender.addEventListener(()=>trace!.afterFrame());
  let error='';viewer.scene.renderError.addEventListener((_s:unknown,e:unknown)=>{error=String(e);status.textContent=error;output.textContent=JSON.stringify({complete:false,error,contextLost:gl.isContextLost(),buffer:[gl.drawingBufferWidth,gl.drawingBufferHeight],canvas:[viewer.canvas.width,viewer.canvas.height],viewport:gl.getParameter(gl.VIEWPORT)});});
  const frame=(count=3)=>new Promise<void>((resolve,reject)=>{if(error){reject(new Error(error));return;}let n=0;const removeError=viewer.scene.renderError.addEventListener((_s:unknown,e:unknown)=>{remove();removeError();reject(e);});const remove=viewer.scene.postRender.addEventListener(()=>{if(++n>=count){remove();removeError();resolve();}});});
- const state=()=>({utc:JulianDate.toIso8601(viewer.clock.currentTime),buffer:[gl.drawingBufferWidth,gl.drawingBufferHeight],camera:{position:Cartesian3.pack(viewer.camera.positionWC,[]),direction:Cartesian3.pack(viewer.camera.directionWC,[]),up:Cartesian3.pack(viewer.camera.upWC,[]),fovy:f.fovy},parameters:{...clouds.parameters},quality:effect.quality,storage:effect.renderTargetMode,motion:effect.motion,atmosphere:{...atmosphere.parameters},force,mask,visible:!document.hidden,focused:document.hasFocus()});
+ const state=()=>{
+   const internal=effect as unknown as {voxelEnabled:boolean;skipVoxels:boolean;stage:PostProcessStageComposite};
+   const stage=internal.stage.get(0) as unknown as {uniforms:Record<string,unknown>};
+   const value=(name:string)=>{const v=stage.uniforms[name];return typeof v==='function'?v():v;};
+   const uniformBudget=Object.fromEntries(['u_cloudSteps','u_cloudSubsteps','u_lightSteps','u_cloudIntervals','u_cloudRepresentations','u_columnGrid','u_columnSections','u_columnQuadrature','u_columnOrders','u_columnComponents','u_highFilterGrid'].map(name=>[name,value(name)]));
+   return {utc:JulianDate.toIso8601(viewer.clock.currentTime),buffer:[gl.drawingBufferWidth,gl.drawingBufferHeight],camera:{position:Cartesian3.pack(viewer.camera.positionWC,[]),direction:Cartesian3.pack(viewer.camera.directionWC,[]),up:Cartesian3.pack(viewer.camera.upWC,[]),fovy:f.fovy},parameters:{...clouds.parameters},quality:effect.quality,storage:effect.renderTargetMode,motion:effect.motion,atmosphere:{...atmosphere.parameters},force,mask,uniformBudget,voxelEnabled:internal.voxelEnabled,voxelReady:effect.voxelReady,skipVoxels:internal.skipVoxels,mainLightModel:'finite local body plus gated voxel cone',mainConeTaps:value('u_lightSteps'),visible:!document.hidden,focused:document.hasFocus()};
+ };
  const image=(name:string,url:string)=>{const fig=document.createElement('figure'),img=new Image();img.dataset.name=name;img.alt=name;img.src=url;const cap=document.createElement('figcaption');cap.textContent=name;fig.append(img,cap);panel.querySelector('#evidence')!.append(fig);};
  const raw=(name:string,save=true)=>{
    const stage=(effect as unknown as {stage:PostProcessStageComposite}).stage.get(0) as unknown as {outputTexture:{width:number;height:number;_texture:WebGLTexture}};
@@ -68,7 +76,8 @@ try{
  panel.querySelector<HTMLButtonElement>('#tour')!.onclick=run(async()=>{
    await configure('global');const rows=[];const keys:[[number,number],number][]=[[[17e6,-90],6],[[1.2e6,-90],14],[[160e3,-60],8],[[8300,-18],6],[[3020,0],6],[[800,12],0]];
    const frames=[];for(let k=0;k<keys.length-1;k++){const [a,count]=keys[k],b=keys[k+1][0];for(let j=0;j<count*8;j++){const t=j/(count*8),h=Math.exp(Math.log(a[0])*(1-t)+Math.log(b[0])*t);camera(h,a[1]*(1-t)+b[1]*t);await frame(1);frames.push(state());if(j%8===0)rows.push(capture('path-'+String(rows.length).padStart(2,'0')));}}
-   camera(800,12);await frame();rows.push(capture('path-'+String(rows.length).padStart(2,'0')));return {frames,samples:rows};
+   camera(800,12);await frame();rows.push(capture('path-'+String(rows.length).padStart(2,'0')));
+   const descent=[...frames];for(let i=descent.length-1;i>=0;i--){const c=descent[i].camera;viewer.camera.setView({destination:Cartesian3.unpack(c.position),orientation:{direction:Cartesian3.unpack(c.direction),up:Cartesian3.unpack(c.up)}});await frame(1);frames.push(state());if(i%8===0)rows.push(capture('ascent-'+String(rows.length).padStart(2,'0')));}return {frames,samples:rows};
  });
  panel.querySelector<HTMLButtonElement>('#diagnostics')!.onclick=run(async()=>{
    if(!query.has('diagnostics'))throw new Error('Open ?diagnostics for isolated source instrumentation; not GPU timing');const rows=[];
@@ -85,7 +94,28 @@ try{
  viewpoints.onclick=run(async()=>{await configure('orbit');const rows=[];for(const h of [220e3,450e3,750e3,1200e3])for(const [label,heading,lon,lat] of [['center',245,-97.52,35.46],['rotated',290,-97.52,35.46],['translated',245,-97.17,35.71]] as const){camera(h,-90,heading,lon,lat);await frame(4);rows.push(capture(`transition-${h}-${label}`,true));}return rows;});
  const shear=document.createElement('button');shear.textContent='Wind shear 0 / 24 / 120';shear.id='shear';panel.insertBefore(shear,output);buttons.push(shear);
  shear.onclick=run(async()=>{await configure('ground');const rows=[];for(const wind of [0,24,120]){clouds.updateParameters({wind});await clouds.ready;effect.setMotion({angle:0,highAngle:0,evolution:0});await frame(5);rows.push(capture(`shear-${wind}`));}return rows;});
- panel.querySelector<HTMLButtonElement>('#switches')!.onclick=run(async()=>{await configure('orbit');const rows=[];for(const [q,hdr] of [['low',true],['high',true],['medium',false],['medium',true],['low',true],['high',true],['medium',true]] as const){const t=performance.now(),start=trace!.timeline.length;clouds.setQuality(q);effect.setHdrEnabled(hdr);await frame();rows.push({q,hdr,wallMs:performance.now()-t,shader:trace!.timeline.slice(start),...capture(`quality-${rows.length}-${q}-${hdr}`)});}return rows;});
+ panel.querySelector<HTMLButtonElement>('#switches')!.onclick=run(async()=>{
+   await configure('orbit');const rows=[];
+   for(const [q,hdr] of [['low',true],['high',true],['medium',false],['medium',true],['low',true],['high',true],['medium',true]] as const){
+     const t=performance.now(),start=trace!.timeline.length;clouds.setQuality(q);effect.setHdrEnabled(hdr);await frame();
+     // postRender confirms submission, not GPU completion. A separate fence
+     // includes the queued work without confusing it with PNG/readback cost.
+     const wallMs=performance.now()-t,sync=gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE,0);
+     if(!sync)throw new Error('Quality completion fence unavailable');gl.flush();
+     let fenceStatus:number=gl.TIMEOUT_EXPIRED;
+     try{await new Promise<void>((resolve,reject)=>{
+       const poll=()=>{fenceStatus=gl.clientWaitSync(sync,0,0);
+         if(fenceStatus===gl.WAIT_FAILED||gl.isContextLost())reject(new Error('Quality completion fence failed'));
+         else if(fenceStatus!==gl.TIMEOUT_EXPIRED)resolve();
+         else if(performance.now()-t>90000)reject(new Error('Quality completion fence timed out'));
+         else requestAnimationFrame(poll);
+       };poll();
+     });}finally{gl.deleteSync(sync);}
+     const gpuCompleteWallMs=performance.now()-t,shader=trace!.timeline.slice(start),snapshot=capture(`quality-${rows.length}-${q}-${hdr}`);
+     rows.push({q,hdr,wallMs,gpuCompleteWallMs,captureMs:performance.now()-t-gpuCompleteWallMs,fenceStatus,
+       timingBoundary:'wallMs: third postRender submission; gpuCompleteWallMs: subsequent GPU fence; captureMs: PNG/readback, excluded from switching',shader,...snapshot});
+   }return rows;
+ });
  panel.querySelector<HTMLButtonElement>('#wind')!.onclick=run(async()=>{await configure('above');const rows=[];for(let i=0;i<=20;i++){const seconds=i*10;effect.setMotion({angle:seconds*24*.001/6378.137,highAngle:seconds*48*.001/6378.137,evolution:seconds*24*.001*.35});await frame(2);rows.push(capture('wind-'+String(i).padStart(2,'0')));}return rows;});
  window.addEventListener('pagehide',()=>{pre();post();trace!.destroy();observer.disconnect();app.destroy();},{once:true});
 }catch(e){GlobalCloudEffect.prototype.mount=mount;HTMLCanvasElement.prototype.getContext=getContext;document.body.append(String(e));observer.disconnect();}

@@ -13,7 +13,7 @@ export function gpuProbe(canvas:HTMLCanvasElement){
     for(const p of [gl!.TEXTURE_MIN_FILTER,gl!.TEXTURE_MAG_FILTER])gl!.texParameteri(gl!.TEXTURE_2D,p,float?gl!.NEAREST:gl!.LINEAR);
     const frame=gl!.createFramebuffer()!;resources.frames.push(frame);gl!.bindFramebuffer(gl!.FRAMEBUFFER,frame);gl!.framebufferTexture2D(gl!.FRAMEBUFFER,gl!.COLOR_ATTACHMENT0,gl!.TEXTURE_2D,texture,0);
     if(gl!.checkFramebufferStatus(gl!.FRAMEBUFFER)!==gl!.FRAMEBUFFER_COMPLETE)throw new Error('Incomplete probe framebuffer');
-    const program=gl!.createProgram()!;resources.programs.push(program);gl!.attachShader(program,vertex);gl!.attachShader(program,shader(gl!.FRAGMENT_SHADER,'#version 300 es\nprecision highp float;precision highp sampler3D;out vec4 out_FragColor;\n'+source));gl!.linkProgram(program);
+    const program=gl!.createProgram()!;resources.programs.push(program);gl!.attachShader(program,vertex);const fragment=shader(gl!.FRAGMENT_SHADER,'#version 300 es\nprecision highp float;precision highp sampler3D;out vec4 out_FragColor;\n'+source);gl!.attachShader(program,fragment);gl!.linkProgram(program);
     if(!gl!.getProgramParameter(program,gl!.LINK_STATUS))throw new Error(gl!.getProgramInfoLog(program)!);gl!.useProgram(program);
     for(const [name,v] of Object.entries(uniforms)){const location=gl!.getUniformLocation(program,name);if(typeof v==='boolean')gl!.uniform1i(location,Number(v));else if(typeof v==='number')gl!.uniform1f(location,v);else if(v.length===9)gl!.uniformMatrix3fv(location,false,v);else if(v.length===3)gl!.uniform3fv(location,v);else gl!.uniform2fv(location,v);}
     Object.entries(inputs).forEach(([name,t],unit)=>{gl!.activeTexture(gl!.TEXTURE0+unit);gl!.bindTexture('target' in t?t.target:gl!.TEXTURE_2D,'texture' in t?t.texture:t);gl!.uniform1i(gl!.getUniformLocation(program,name),unit);});
@@ -25,6 +25,12 @@ export function gpuProbe(canvas:HTMLCanvasElement){
     const pixels=float?new Float32Array(width*height*4):new Uint8Array(width*height*4);
     gl!.readPixels(0,0,width,height,gl!.RGBA,float?gl!.FLOAT:gl!.UNSIGNED_BYTE,pixels);
     if(gl!.getError()!==gl!.NO_ERROR)throw new Error('WebGL probe draw failed');
+    // The readback is complete. Only its texture can be used by later LUT
+    // draws; retaining hundreds of compiled diagnostic programs serves no
+    // purpose and can exhaust a long numerical session's driver resources.
+    gl!.useProgram(null);gl!.bindFramebuffer(gl!.FRAMEBUFFER,null);
+    gl!.deleteProgram(program);resources.programs.pop();gl!.deleteShader(fragment);resources.shaders.pop();
+    gl!.deleteFramebuffer(frame);resources.frames.pop();
     return {texture,pixels};
   }
   return {gl,draw,destroy(){for(const p of resources.programs)gl.deleteProgram(p);for(const s of resources.shaders)gl.deleteShader(s);for(const f of resources.frames)gl.deleteFramebuffer(f);for(const t of resources.textures)gl.deleteTexture(t);}};

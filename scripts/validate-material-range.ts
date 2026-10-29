@@ -41,6 +41,6 @@ for(const [detail,thickness,density,wind=24] of [[.55,3.8,1.1],[0,3.8,1.1],[1,3.
   const updated=sampleVolume(materialTables.get(key)!,32,...uv,0);
   rows.push({detail,thickness,density,slant,wind,oldTableOpacity:actual,tableOpacity:updated,reference:a,reference192:b,oldError:actual-b.opacity,error:updated-b.opacity,convergence:b.opacity-a.opacity,pass:Math.abs(updated-b.opacity)<=.02&&Math.abs(b.opacity-a.opacity)<=.002});
 }
-mkdirSync('artifacts/stage7/data',{recursive:true});writeFileSync('artifacts/stage7/data/material-range.json',JSON.stringify({passed:rows.every(r=>r.pass),targets:{opacity:.02,convergence:.002},kind:'Stage 7 parameterized material; type=.75, cut=.1, 256 same-seed columns. Old table column here means current default material, not stage 6 morphology.',rows},null,2));
+mkdirSync('artifacts/stage7-correction/data',{recursive:true});writeFileSync('artifacts/stage7-correction/data/material-range.json',JSON.stringify({passed:rows.every(r=>r.pass),targets:{opacity:.02,convergence:.002},kind:'Stage 7 parameterized material; type=.75, cut=.1, 256 same-seed columns. Old table column here means current default material, not stage 6 morphology.',rows},null,2));
 console.log(JSON.stringify(rows.map(r=>({detail:r.detail,thickness:r.thickness,density:r.density,slant:r.slant,error:r.error,convergence:r.convergence})),null,2));
 if(rows.some(r=>!r.pass))process.exitCode=1;

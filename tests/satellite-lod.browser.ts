@@ -1,4 +1,5 @@
 import {cloudProbe} from './cloudProbe';
+import {cloudTransitionProbe} from './cloudTransitionProbe';
 import common from '../src/effects/hillaire-atmosphere/shaders/common.glsl?raw';
 import density from '../src/effects/global-clouds/shaders/density.glsl?raw';
 import voxel from '../src/effects/global-clouds/shaders/voxel.glsl?raw';
@@ -53,7 +54,9 @@ try{
   const sun=[-.2,-.8,.56].map(v=>v/Math.hypot(.2,.8,.56));
   const uniforms={...gpu.uniforms,u_steps:96,u_pixelAngle:footprint/17001.9,u_sun:sun,u_moon:sun.map(v=>-v),u_atmosphere:false,u_moonFraction:0,u_moonGain:0};
   const inputs={...gpu.inputs,u_cirrus:gpu.inputs.u_noise,u_transmittance:gpu.inputs.u_weather,u_multiple:gpu.inputs.u_weather,u_skyIrradiance:gpu.inputs.u_weather};
-  if(new URLSearchParams(location.search).has('transition')){
+  if(['split','local'].includes(new URLSearchParams(location.search).get('transition')??'')){
+    output.textContent=JSON.stringify(await cloudTransitionProbe(gpu,header,uniforms,inputs,new URLSearchParams(location.search).get('transition')==='local'),null,2);
+  }else if(new URLSearchParams(location.search).has('transition')){
     // Actual varying weather and voxel density. Independent high-step point
     // rays are averaged in linear L/T; no far/Q/cache helper makes the reference.
     // This is a model-accuracy diagnostic, separate from endpoint continuity.
