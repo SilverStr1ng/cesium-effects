@@ -115,6 +115,10 @@ npm run preview
 
 使用 `/?benchmark` 打开可见的 10 秒性能采样工具（先预热 2 秒），分别记录帧间隔、CPU 提交时间和 GPU timer query 时间，以及所有特效状态和相机。没有 GPU 计时扩展时显示不可用；页面进入后台时取消测量。默认进入全球天空；龙卷风使用 `/?effect=tornado&benchmark`。[龙卷风验证记录](docs/tornado-validation.md) 和 [云方案/验证记录](docs/global-clouds.md) 包含本机测量与边界。
 
+## 本地 AI 绘图工具
+
+独立工具位于 [tools/image-studio](tools/image-studio/README.md)：Windows 下双击 `start.bat`，使用自己的 OpenAI API Key，可手填模型 ID、上传参考图、设置参数并保存本地图库。需要 Python 3.12+，首次启动会安装依赖。
+
 ## 许可与提交
 
 代码采用 [MIT License](LICENSE)。Cesium 及其他依赖保留各自许可证。仓库地址为 https://github.com/SilverStr1ng/cesium-effects.git，提交采用 Angular 风格：`type(scope): description`。`.env` 保留在本地，仓库仅提供空值模板 `.env.example`。

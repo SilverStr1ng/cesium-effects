@@ -1,0 +1,4 @@
+gradio>=6.0,<7
+httpx>=0.28,<0.29
+python-dotenv>=1.0,<2
+Pillow>=11,<13
